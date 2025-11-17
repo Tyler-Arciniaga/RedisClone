@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"log/slog"
 	"net"
 	"os"
@@ -9,11 +8,10 @@ import (
 )
 
 type Server struct {
-	connSet  map[net.Conn]bool
-	joinChan chan (net.Conn)
+	connSet   map[net.Conn]bool
+	joinChan  chan (net.Conn)
+	leaveChan chan (net.Conn)
 }
-
-//TODO handle graceful exits (error EOF)
 
 // Bind to port, start new tcp server, and listen for client connections
 func (s *Server) StartServer() {
@@ -26,6 +24,7 @@ func (s *Server) StartServer() {
 	slog.Info("Now listening on port 6793")
 
 	go s.RegisterNewConnections()
+	go s.DisconnectConnections()
 
 	for {
 		conn, err := ln.Accept()
@@ -43,6 +42,12 @@ func (s *Server) StartServer() {
 func (s *Server) RegisterNewConnections() {
 	for c := range s.joinChan {
 		s.connSet[c] = true
+	}
+}
+
+func (s *Server) DisconnectConnections() {
+	for c := range s.leaveChan {
+		delete(s.connSet, c)
 	}
 }
 
@@ -90,7 +95,8 @@ func (s *Server) HandleClientStream(conn net.Conn) {
 			n, err := conn.Read(newChunk)
 			if err != nil {
 				slog.Error(err.Error())
-				os.Exit(1) //TODO improve error handling
+				s.leaveChan <- conn
+				return
 			}
 			buf = append(buf, newChunk[:n]...)
 			line, i, ok = s.ReadLine(buf)
@@ -110,7 +116,8 @@ func (s *Server) HandleClientStream(conn net.Conn) {
 				n, err := conn.Read(newChunk)
 				if err != nil {
 					slog.Error(err.Error())
-					os.Exit(1) //TODO improve error handling
+					s.leaveChan <- conn
+					return
 				}
 				buf = append(buf, newChunk[:n]...)
 				line, i, ok = s.ReadLine(buf)
@@ -129,7 +136,8 @@ func (s *Server) HandleClientStream(conn net.Conn) {
 				n, err := conn.Read(newChunk)
 				if err != nil {
 					slog.Error(err.Error())
-					os.Exit(1) //TODO improve error handling
+					s.leaveChan <- conn
+					return
 				}
 				buf = append(buf, newChunk[:n]...)
 			}
@@ -145,43 +153,29 @@ func (s *Server) HandleClientStream(conn net.Conn) {
 
 		}
 
-		fmt.Println("Done parsing!")
-		for _, v := range cmd {
-			fmt.Println(string(v))
-		}
+		resp := s.HandleParsedCommands(cmd)
+		conn.Write(resp)
+
 	}
 }
 
-// // Redis client always sends command as an array of bulk strings -> cmd, arg1, arg2, ...
-// func (s *Server) ParseIncomingCommand(b []byte, conn net.Conn) {
-// 	numElements, i := s.ReadCommandLength(b, 1)
+func (s *Server) HandleParsedCommands(cmd [][]byte) []byte {
+	var response []byte
+	switch string(cmd[0]) {
+	case "PING":
+		if len(cmd) == 1 {
+			response = s.GenerateSimpleString([]byte("PONG"))
+		} else {
+			response = s.GenerateBulkString(cmd[1])
+		}
+	case "ECHO":
+		response = s.GenerateBulkString(cmd[1])
+	}
 
-// 	var elements [][]byte
-// 	for j := 0; j < numElements; j++ {
-// 		element, temp := s.ParseElement(b, i)
-// 		i = temp
-// 		elements = append(elements, element)
-// 	}
-
-// 	for i, v := range elements {
-// 		fmt.Println(i, string(v))
-// 	}
-
-// 	switch string(elements[0]) {
-// 	//TODO make sure to serialize return message back into RESP, don't just send as raw bytes without serialization
-// 	case "PING":
-// 		if len(elements) == 1 {
-// 			b := s.GenerateSimpleString([]byte("PONG"))
-// 			conn.Write(b)
-// 		} else {
-// 			b := s.GenerateBulkString(elements[1])
-// 			conn.Write(b)
-// 		}
-// 	}
-// }
+	return response
+}
 
 func (s *Server) GenerateBulkString(bytes []byte) []byte {
-	fmt.Println(len(bytes))
 	out := make([]byte, 0, len(bytes)+32)
 	out = append(out, '$')
 	out = strconv.AppendInt(out, int64(len(bytes)), 10)
@@ -198,14 +192,6 @@ func (s *Server) GenerateSimpleString(bytes []byte) []byte {
 	return out
 }
 
-// func (s *Server) ParseElement(b []byte, i int) ([]byte, int) {
-// 	elementLen, start := s.ReadCommandLength(b, i+1) //TODO account for the data type which is in b[i] first
-// 	fmt.Println("here", string(b[start+1:]))
-// 	var element []byte
-// 	element = append(element, b[start:start+elementLen]...)
-
-//		return element, start + elementLen + 2
-//	}
 func (s *Server) ReadPrefixLength(b []byte) int {
 	//reverse byte slice to make digit math work
 	for i, j := 0, len(b)-1; i < j; i, j = i+1, j-1 {
