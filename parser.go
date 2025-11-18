@@ -2,6 +2,10 @@ package main
 
 import "strconv"
 
+type Command struct {
+	Name string
+	Args [][]byte
+}
 type Parser struct{}
 
 func (p Parser) ReadLine(buf []byte) ([]byte, int, bool) {
@@ -15,12 +19,12 @@ func (p Parser) ReadLine(buf []byte) ([]byte, int, bool) {
 	return nil, 0, false
 }
 
-func (p Parser) TryParsingCommand(buf []byte) ([][]byte, int, bool) {
-	var cmd [][]byte
+func (p Parser) TryParsingCommand(buf []byte) (Command, int, bool) {
+	var cmd Command
 	offset := 0
 	line, consumed, ok := p.ReadLine(buf[offset:])
 	if !ok {
-		return nil, 0, false
+		return Command{}, 0, false
 	}
 
 	offset += consumed
@@ -29,18 +33,22 @@ func (p Parser) TryParsingCommand(buf []byte) ([][]byte, int, bool) {
 	for i := 0; i < cmdArrayLen; i++ {
 		line, consumed, ok := p.ReadLine(buf[offset:])
 		if !ok {
-			return nil, 0, false
+			return Command{}, 0, false
 		}
 		offset += consumed
 		prefixLen := p.ReadPrefixLength(line)
 		if len(buf[offset:]) < prefixLen+2 {
-			return nil, 0, false
+			return Command{}, 0, false
 		}
 
 		bulkString := buf[offset : offset+prefixLen]
 		offset += prefixLen + 2
 
-		cmd = append(cmd, bulkString)
+		if i == 0 {
+			cmd.Name = string(bulkString)
+		} else {
+			cmd.Args = append(cmd.Args, bulkString)
+		}
 
 	}
 	return cmd, offset, true

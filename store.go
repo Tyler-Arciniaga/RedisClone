@@ -1,13 +1,16 @@
 package main
 
-import "sync"
+import (
+	"sync"
+	"time"
+)
 
 type Store struct {
-	store map[string][]byte
+	store map[string]StoreData
 	lock  sync.Mutex
 }
 
-func (s *Store) SetKeyVal(k, v []byte) bool {
+func (s *Store) SetKeyVal(k []byte, v StoreData) bool {
 	s.lock.Lock()
 	defer s.lock.Unlock()
 	s.store[string(k)] = v
@@ -17,9 +20,11 @@ func (s *Store) SetKeyVal(k, v []byte) bool {
 func (s *Store) GetKeyVal(k []byte) []byte {
 	s.lock.Lock()
 	defer s.lock.Unlock()
-	v, ok := s.store[string(k)]
-	if !ok {
+	key := string(k)
+	v, ok := s.store[key]
+	if !ok || (!v.ttl.IsZero() && time.Now().After(v.ttl)) {
+		delete(s.store, key)
 		return nil
 	}
-	return v
+	return v.data
 }

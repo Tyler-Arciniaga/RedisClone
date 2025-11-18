@@ -5,6 +5,7 @@ import (
 	"net"
 	"os"
 	"strconv"
+	"time"
 )
 
 type Server struct {
@@ -81,26 +82,30 @@ func (s *Server) HandleClientStream(conn net.Conn) {
 	}
 }
 
-func (s *Server) HandleParsedCommands(cmd [][]byte) []byte {
+func (s *Server) HandleParsedCommands(cmd Command) []byte {
 	var response []byte
-	switch string(cmd[0]) {
+	switch cmd.Name {
 	case "PING":
-		if len(cmd) == 1 {
+		if len(cmd.Args) == 0 {
 			response = s.GenerateSimpleString([]byte("PONG"))
 		} else {
-			response = s.GenerateBulkString(cmd[1])
+			response = s.GenerateBulkString(cmd.Args[0])
 		}
 	case "ECHO":
-		response = s.GenerateBulkString(cmd[1])
+		response = s.GenerateBulkString(cmd.Args[0])
 	case "SET":
-		ok := s.Store.SetKeyVal(cmd[1], cmd[2])
-		if !ok {
-			//TODO handle failed set command
+		var d StoreData
+		d.data = cmd.Args[1]
+		for i := 0; i < len(cmd.Args); i++ {
+			if string(cmd.Args[i]) == "EX" {
+				ttl, _ := strconv.Atoi(string(cmd.Args[i+1])) //TODO handle potential error
+				d.ttl = (time.Now().Add(time.Duration(ttl) * time.Second))
+			}
 		}
-
+		s.Store.SetKeyVal(cmd.Args[0], d)
 		response = s.GenerateSimpleString([]byte("OK"))
 	case "GET":
-		v := s.Store.GetKeyVal(cmd[1])
+		v := s.Store.GetKeyVal(cmd.Args[0])
 		if v == nil {
 			response = s.GenerateNilBulkString()
 		} else {
