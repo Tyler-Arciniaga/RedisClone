@@ -6,6 +6,7 @@ import (
 
 func main() {
 	store := Store{store: make(map[string]StoreData)}
-	s := Server{Parser: Parser{}, Store: &store, connSet: make(map[net.Conn]bool), joinChan: make(chan net.Conn), leaveChan: make(chan net.Conn)}
-	s.StartServer()
+	handler := Handler{Store: &store}
+	server := Server{Parser: Parser{}, Handler: handler, connSet: make(map[net.Conn]bool), joinChan: make(chan net.Conn), leaveChan: make(chan net.Conn)}
+	server.StartServer()
 }

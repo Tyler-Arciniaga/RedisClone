@@ -4,13 +4,11 @@ import (
 	"log/slog"
 	"net"
 	"os"
-	"strconv"
-	"time"
 )
 
 type Server struct {
 	Parser    Parser
-	Store     *Store
+	Handler   Handler
 	connSet   map[net.Conn]bool
 	joinChan  chan (net.Conn)
 	leaveChan chan (net.Conn)
@@ -62,7 +60,7 @@ func (s *Server) HandleClientStream(conn net.Conn) {
 	temp := make([]byte, 4096)
 
 	for {
-		n, err := conn.Read(buf)
+		n, err := conn.Read(temp)
 		if err != nil {
 			slog.Error(err.Error())
 			s.leaveChan <- conn
@@ -86,57 +84,14 @@ func (s *Server) HandleParsedCommands(cmd Command) []byte {
 	var response []byte
 	switch cmd.Name {
 	case "PING":
-		if len(cmd.Args) == 0 {
-			response = s.GenerateSimpleString([]byte("PONG"))
-		} else {
-			response = s.GenerateBulkString(cmd.Args[0])
-		}
+		response = s.Handler.HandlePingCommand(cmd)
 	case "ECHO":
-		response = s.GenerateBulkString(cmd.Args[0])
+		response = s.Handler.HandleEchoCommand(cmd)
 	case "SET":
-		var d StoreData
-		d.data = cmd.Args[1]
-		for i := 0; i < len(cmd.Args); i++ {
-			if string(cmd.Args[i]) == "EX" {
-				ttl, _ := strconv.Atoi(string(cmd.Args[i+1])) //TODO handle potential error
-				d.ttl = (time.Now().Add(time.Duration(ttl) * time.Second))
-			}
-		}
-		s.Store.SetKeyVal(cmd.Args[0], d)
-		response = s.GenerateSimpleString([]byte("OK"))
+		response = s.Handler.HandleSetCommand(cmd)
 	case "GET":
-		v := s.Store.GetKeyVal(cmd.Args[0])
-		if v == nil {
-			response = s.GenerateNilBulkString()
-		} else {
-			response = s.GenerateBulkString(v)
-		}
+		response = s.Handler.HandleGetCommand(cmd)
 	}
 
 	return response
-}
-
-func (s *Server) GenerateBulkString(bytes []byte) []byte {
-	out := make([]byte, 0, len(bytes)+32)
-	out = append(out, '$')
-	out = strconv.AppendInt(out, int64(len(bytes)), 10)
-	out = append(out, '\r', '\n')
-	out = append(out, bytes...)
-	out = append(out, '\r', '\n')
-	return out
-}
-
-func (s *Server) GenerateNilBulkString() []byte {
-	out := make([]byte, 0)
-	out = append(out, '$')
-	out = strconv.AppendInt(out, -1, 10)
-	out = append(out, '\r', '\n')
-	return out
-}
-func (s *Server) GenerateSimpleString(bytes []byte) []byte {
-	out := make([]byte, 0, len(bytes)+32)
-	out = append(out, '+')
-	out = append(out, bytes...)
-	out = append(out, '\r', '\n')
-	return out
 }
