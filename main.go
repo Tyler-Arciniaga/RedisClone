@@ -5,6 +5,7 @@ import (
 )
 
 func main() {
-	s := Server{Parser: Parser{}, connSet: make(map[net.Conn]bool), joinChan: make(chan net.Conn), leaveChan: make(chan net.Conn)}
+	store := Store{store: map[string][]byte{}}
+	s := Server{Parser: Parser{}, Store: &store, connSet: make(map[net.Conn]bool), joinChan: make(chan net.Conn), leaveChan: make(chan net.Conn)}
 	s.StartServer()
 }
