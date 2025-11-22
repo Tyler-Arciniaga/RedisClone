@@ -10,17 +10,28 @@ type Store struct {
 	lock  sync.Mutex
 }
 
-func (s *Store) SetKeyVal(k []byte, v StoreData) bool {
+func (s *Store) SetKeyVal(r SetRequest) bool {
 	s.lock.Lock()
 	defer s.lock.Unlock()
-	s.store[string(k)] = v
+
+	var sd StoreData
+	sd.data = r.Value
+
+	for _, v := range r.Options {
+		switch v.Name {
+		case "EX":
+			sd.ttl = time.Now().Add(time.Duration(v.Arg.(int)) * time.Second)
+		}
+	}
+
+	s.store[r.Key] = sd
 	return true
 }
 
-func (s *Store) GetKeyVal(k []byte) []byte {
+func (s *Store) GetKeyVal(key string) []byte {
 	s.lock.Lock()
 	defer s.lock.Unlock()
-	key := string(k)
+
 	v, ok := s.store[key]
 	if !ok || (!v.ttl.IsZero() && time.Now().After(v.ttl)) {
 		delete(s.store, key)

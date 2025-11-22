@@ -27,6 +27,7 @@ func (s *Server) StartServer() {
 
 	slog.Info("Now listening on port 6793")
 
+	s.Handler.InitalizeHandler()
 	go s.RegisterNewConnections()
 	go s.DisconnectConnections()
 

@@ -1,69 +1,74 @@
 package main
 
 import (
+	"bytes"
 	"strconv"
-	"time"
 )
 
 type Handler struct {
-	Store *Store
+	Store   *Store
+	Encoder Encoder
 }
 
-func (h Handler) HandlePingCommand(cmd Command) []byte {
+type Option struct {
+	Name string
+	Arg  any
+}
+
+type SetRequest struct {
+	Key     string
+	Value   []byte
+	Options []Option
+}
+
+func (h *Handler) InitalizeHandler() {
+	h.Encoder.InitalizeEncodingMap()
+}
+
+func (h *Handler) HandlePingCommand(cmd Command) []byte {
 	if len(cmd.Args) == 0 {
-		return h.GenerateSimpleString([]byte("PONG"))
+		return h.Encoder.GenerateSimpleString([]byte("PONG"))
 	}
-	return h.GenerateBulkString(cmd.Args[0])
+	return h.Encoder.GenerateBulkString(cmd.Args[0])
 
 }
 
-func (h Handler) HandleEchoCommand(cmd Command) []byte {
-	return h.GenerateBulkString(cmd.Args[0])
+func (h *Handler) HandleEchoCommand(cmd Command) []byte {
+	return h.Encoder.GenerateBulkString(cmd.Args[0])
 }
 
-func (h Handler) HandleSetCommand(cmd Command) []byte {
-	var d StoreData
-	d.data = cmd.Args[1]
-	for i := 0; i < len(cmd.Args); i++ {
-		if string(cmd.Args[i]) == "EX" {
-			ttl, _ := strconv.Atoi(string(cmd.Args[i+1])) //TODO handle potential error
-			d.ttl = (time.Now().Add(time.Duration(ttl) * time.Second))
+func (h *Handler) HandleSetCommand(cmd Command) []byte {
+	options := h.ParseOptions(cmd)
+	sr := SetRequest{Key: string(cmd.Args[0]), Value: cmd.Args[1], Options: options}
+	h.Store.SetKeyVal(sr)
+
+	return h.Encoder.GetSimpleStringOk()
+}
+
+// TODO fix me!!!
+func (h *Handler) ParseOptions(cmd Command) []Option {
+	var options []Option
+	switch cmd.Name {
+	case "SET":
+		exOption := []byte("EX")
+		optionPortion := cmd.Args[2:]
+		for i := 0; i < len(optionPortion); i++ {
+			if bytes.Equal(optionPortion[i], exOption) {
+				ttl, _ := strconv.Atoi(string(optionPortion[i+1])) //TODO handle potential error
+				o := Option{Name: "EX", Arg: ttl}
+				options = append(options, o)
+			}
 		}
 	}
-	h.Store.SetKeyVal(cmd.Args[0], d)
-	return h.GenerateSimpleString([]byte("OK"))
+	return options
 }
 
-func (h Handler) HandleGetCommand(cmd Command) []byte {
-	v := h.Store.GetKeyVal(cmd.Args[0])
+func (h *Handler) HandleGetCommand(cmd Command) []byte {
+	key := string(cmd.Args[0])
+	v := h.Store.GetKeyVal(key)
 	if v == nil {
-		return h.GenerateNilBulkString()
+		return h.Encoder.GetNilBulkString()
 	}
-	return h.GenerateBulkString(v)
+	return h.Encoder.GenerateBulkString(v)
 
-}
-
-func (h Handler) GenerateBulkString(bytes []byte) []byte {
-	out := make([]byte, 0, len(bytes)+32)
-	out = append(out, '$')
-	out = strconv.AppendInt(out, int64(len(bytes)), 10)
-	out = append(out, '\r', '\n')
-	out = append(out, bytes...)
-	out = append(out, '\r', '\n')
-	return out
-}
-
-func (h Handler) GenerateNilBulkString() []byte {
-	out := make([]byte, 0)
-	out = append(out, '$')
-	out = strconv.AppendInt(out, -1, 10)
-	out = append(out, '\r', '\n')
-	return out
-}
-func (h Handler) GenerateSimpleString(bytes []byte) []byte {
-	out := make([]byte, 0, len(bytes)+32)
-	out = append(out, '+')
-	out = append(out, bytes...)
-	out = append(out, '\r', '\n')
-	return out
 }
