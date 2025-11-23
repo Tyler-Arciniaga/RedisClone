@@ -17,8 +17,15 @@ type List struct {
 	Tail   *ListNode
 	Length int
 }
-type ListRequest struct {
+type ListModificationRequest struct {
 	Name   string
 	Key    string
 	Values [][]byte
+}
+
+type ListRangeRequest struct {
+	Name  string
+	Key   string
+	Start int
+	End   int
 }

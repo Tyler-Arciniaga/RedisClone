@@ -93,7 +93,11 @@ func (s *Server) HandleParsedCommands(cmd Command) []byte {
 	case "GET":
 		response = s.Handler.HandleGetCommand(cmd)
 	case "LPUSH":
-		response = s.Handler.HandleLpushCommand(cmd)
+		response = s.Handler.HandleListPushCommand(cmd)
+	case "RPUSH":
+		response = s.Handler.HandleListPushCommand(cmd)
+	case "LRANGE":
+		response = s.Handler.HandleListRangeCommand(cmd)
 	}
 
 	return response

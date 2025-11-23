@@ -41,6 +41,19 @@ func (e *Encoder) GenerateInt(i int) []byte {
 	return out
 }
 
+func (e *Encoder) GenerateArray(array [][]byte) []byte {
+	out := make([]byte, 0, len(array)+32)
+	out = append(out, '*')
+	out = strconv.AppendInt(out, int64(len(array)), 10)
+	out = append(out, '\r', '\n')
+	for _, v := range array {
+		out = append(out, e.GenerateBulkString(v)...)
+	}
+
+	return out
+
+}
+
 func (e *Encoder) GenerateNilBulkString() []byte {
 	out := make([]byte, 0)
 	out = append(out, '$')

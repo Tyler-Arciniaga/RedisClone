@@ -43,7 +43,7 @@ func (s *Store) GetKeyVal(key string) []byte {
 	return v.data
 }
 
-func (s *Store) ListLeftPush(lc ListRequest) int {
+func (s *Store) ListPush(lc ListModificationRequest) int {
 	s.lock.Lock()
 	defer s.lock.Unlock()
 
@@ -53,11 +53,20 @@ func (s *Store) ListLeftPush(lc ListRequest) int {
 	} //create a new list
 
 	for _, v := range lc.Values {
-		newNode := ListNode{Data: v, Next: list.Head, Prev: nil}
-		list.Head = &newNode
+		switch lc.Name {
+		case "LPUSH":
+			newNode := ListNode{Data: v, Next: list.Head, Prev: nil}
+			list.Head = &newNode
+			if list.Length == 0 {
+				list.Tail = &newNode
+			}
 
-		if list.Length == 0 {
+		case "RPUSH":
+			newNode := ListNode{Data: v, Next: nil, Prev: list.Tail}
 			list.Tail = &newNode
+			if list.Length == 0 {
+				list.Head = &newNode
+			}
 		}
 
 		list.Length += 1
@@ -65,5 +74,43 @@ func (s *Store) ListLeftPush(lc ListRequest) int {
 
 	s.listStore[lc.Key] = list
 
+	return list.Length
+}
+
+func (s *Store) ListRange(lc ListRangeRequest) [][]byte {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+
+	var elements [][]byte
+	start, end := lc.Start, lc.End
+
+	list, ok := s.listStore[lc.Key]
+
+	if !ok || list.Length == 0 || (start > end) {
+		//return empty array (nil representation)
+		return nil
+	}
+
+	ptr := list.Head
+	for range lc.Start {
+		ptr = ptr.Next
+	}
+
+	for range lc.End - lc.Start + 1 {
+		elements = append(elements, ptr.Data)
+		ptr = ptr.Next
+	}
+
+	return elements
+}
+
+func (s *Store) ListLength(key string) int {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+
+	list, ok := s.listStore[key]
+	if !ok {
+		return 0
+	}
 	return list.Length
 }

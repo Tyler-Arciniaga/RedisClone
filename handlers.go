@@ -2,8 +2,11 @@ package main
 
 import (
 	"bytes"
+	"log/slog"
 	"strconv"
 )
+
+//TODO add error handling to all handler functions
 
 type Handler struct {
 	Store   *Store
@@ -74,14 +77,44 @@ func (h *Handler) HandleGetCommand(cmd Command) []byte {
 }
 
 // List Commands
-func (h *Handler) HandleLpushCommand(cmd Command) []byte {
-	var lc ListRequest
+func (h *Handler) HandleListPushCommand(cmd Command) []byte {
+	var lc ListModificationRequest
 	lc.Name = cmd.Name
 	lc.Key = string(cmd.Args[0])
 	lc.Values = append(lc.Values, cmd.Args[1:]...)
 
-	listLength := h.Store.ListLeftPush(lc)
+	listLength := h.Store.ListPush(lc)
 	resp := h.Encoder.GenerateInt(listLength)
 
 	return resp
+}
+
+func (h *Handler) HandleListRangeCommand(cmd Command) []byte {
+	var lc ListRangeRequest
+	lc.Name = cmd.Name
+	lc.Key = string(cmd.Args[0])
+	start, err1 := strconv.Atoi(string(cmd.Args[1]))
+	end, err2 := strconv.Atoi(string(cmd.Args[2]))
+	if err1 != nil || err2 != nil {
+		slog.Error("Error converting start and end range to ints", "err1", err1, "err2", err2)
+		return nil
+	}
+
+	listLength := h.Store.ListLength(lc.Key)
+
+	lc.Start = h.FormatListRangeIndex(start, listLength)
+	lc.End = h.FormatListRangeIndex(end, listLength)
+
+	listArray := h.Store.ListRange(lc)
+	resp := h.Encoder.GenerateArray(listArray)
+
+	return resp
+}
+
+func (h *Handler) FormatListRangeIndex(i, len int) int {
+	if i < 0 {
+		return max((len + i), 0)
+	}
+
+	return min(len-1, i)
 }
