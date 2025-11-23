@@ -72,3 +72,16 @@ func (h *Handler) HandleGetCommand(cmd Command) []byte {
 	return h.Encoder.GenerateBulkString(v)
 
 }
+
+// List Commands
+func (h *Handler) HandleLpushCommand(cmd Command) []byte {
+	var lc ListRequest
+	lc.Name = cmd.Name
+	lc.Key = string(cmd.Args[0])
+	lc.Values = append(lc.Values, cmd.Args[1:]...)
+
+	listLength := h.Store.ListLeftPush(lc)
+	resp := h.Encoder.GenerateInt(listLength)
+
+	return resp
+}

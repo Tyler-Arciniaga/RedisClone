@@ -33,6 +33,14 @@ func (e *Encoder) GenerateBulkString(bytes []byte) []byte {
 	return out
 }
 
+func (e *Encoder) GenerateInt(i int) []byte {
+	out := make([]byte, 0, 32)
+	out = append(out, ':')
+	out = strconv.AppendInt(out, int64(i), 10)
+	out = append(out, '\r', '\n')
+	return out
+}
+
 func (e *Encoder) GenerateNilBulkString() []byte {
 	out := make([]byte, 0)
 	out = append(out, '$')

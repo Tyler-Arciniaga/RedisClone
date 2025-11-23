@@ -92,6 +92,8 @@ func (s *Server) HandleParsedCommands(cmd Command) []byte {
 		response = s.Handler.HandleSetCommand(cmd)
 	case "GET":
 		response = s.Handler.HandleGetCommand(cmd)
+	case "LPUSH":
+		response = s.Handler.HandleLpushCommand(cmd)
 	}
 
 	return response
