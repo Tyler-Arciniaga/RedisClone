@@ -98,6 +98,12 @@ func (s *Server) HandleParsedCommands(cmd Command) []byte {
 		response = s.Handler.HandleListPushCommand(cmd)
 	case "LRANGE":
 		response = s.Handler.HandleListRangeCommand(cmd)
+	case "LLEN":
+		response = s.Handler.HandleListLengthCommand(cmd)
+	case "LPOP":
+		response = s.Handler.HandleListPopCommand(cmd)
+	case "RPOP":
+		response = s.Handler.HandleListPopCommand(cmd)
 	}
 
 	return response

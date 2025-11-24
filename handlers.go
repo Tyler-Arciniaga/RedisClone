@@ -118,3 +118,40 @@ func (h *Handler) FormatListRangeIndex(i, len int) int {
 
 	return min(len-1, i)
 }
+
+func (h *Handler) HandleListLengthCommand(cmd Command) []byte {
+	key := string(cmd.Args[0])
+
+	listLength := h.Store.ListLength(key)
+	resp := h.Encoder.GenerateInt(listLength)
+
+	return resp
+}
+
+func (h *Handler) HandleListPopCommand(cmd Command) []byte {
+	var lc ListPopRequest
+	key := string(cmd.Args[0])
+	lc.Name = cmd.Name
+	lc.Key = key
+	lc.Count = 1
+	if len(cmd.Args) > 1 {
+		count, err := strconv.Atoi(string(cmd.Args[1]))
+		if err != nil {
+			slog.Error("Error converting pop count to int", "err", err)
+		}
+		lc.Count = count
+	}
+
+	listArray := h.Store.ListPop(lc)
+
+	var resp []byte
+	if listArray == nil {
+		resp = h.Encoder.GenerateNilBulkString()
+	} else if len(listArray) == 1 {
+		resp = h.Encoder.GenerateBulkString(listArray[0])
+	} else {
+		resp = h.Encoder.GenerateArray(listArray)
+	}
+
+	return resp
+}

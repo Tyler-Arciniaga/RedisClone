@@ -29,3 +29,9 @@ type ListRangeRequest struct {
 	Start int
 	End   int
 }
+
+type ListPopRequest struct {
+	Name  string
+	Key   string
+	Count int
+}

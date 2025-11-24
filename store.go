@@ -1,6 +1,7 @@
 package main
 
 import (
+	"log/slog"
 	"sync"
 	"time"
 )
@@ -63,7 +64,12 @@ func (s *Store) ListPush(lc ListModificationRequest) int {
 
 		case "RPUSH":
 			newNode := ListNode{Data: v, Next: nil, Prev: list.Tail}
+			if list.Length != 0 {
+				list.Tail.Next = &newNode
+			}
+
 			list.Tail = &newNode
+
 			if list.Length == 0 {
 				list.Head = &newNode
 			}
@@ -75,6 +81,49 @@ func (s *Store) ListPush(lc ListModificationRequest) int {
 	s.listStore[lc.Key] = list
 
 	return list.Length
+}
+
+func (s *Store) ListPop(lc ListPopRequest) [][]byte {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+
+	var elements [][]byte
+
+	list, ok := s.listStore[lc.Key]
+	if !ok {
+		return nil
+	}
+	defer func() {
+		s.listStore[lc.Key] = list
+	}()
+
+	for range lc.Count {
+		if list.Length == 0 {
+			return elements
+		}
+		switch lc.Name {
+		case "LPOP":
+			elements = append(elements, list.Head.Data)
+			nxt := list.Head.Next
+			list.Head.Next = nil
+			list.Head = nxt
+			if list.Head != nil {
+				list.Head.Prev = nil
+			}
+		case "RPOP":
+			elements = append(elements, list.Tail.Data)
+			prev := list.Tail.Prev
+			list.Tail.Prev = nil
+			list.Tail = prev
+			if list.Tail != nil {
+				list.Tail.Next = nil
+			}
+		}
+
+		list.Length -= 1
+	}
+
+	return elements
 }
 
 func (s *Store) ListRange(lc ListRangeRequest) [][]byte {
@@ -110,6 +159,10 @@ func (s *Store) ListLength(key string) int {
 
 	list, ok := s.listStore[key]
 	if !ok {
+		if _, ok := s.kvStore[key]; ok {
+			//TODO return formatted error here eventually instead of just 0
+			slog.Error("(error) WRONGTYPE Operation against a key holding the wrong kind of value")
+		}
 		return 0
 	}
 	return list.Length
