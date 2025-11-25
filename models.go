@@ -35,3 +35,9 @@ type ListPopRequest struct {
 	Key   string
 	Count int
 }
+
+type ListBlockedPopRequest struct {
+	Name    string
+	Keys    []string
+	Timeout float64
+}

@@ -155,3 +155,27 @@ func (h *Handler) HandleListPopCommand(cmd Command) []byte {
 
 	return resp
 }
+
+func (h *Handler) HandleListBlockingPopCommand(cmd Command) []byte {
+	var lc ListBlockedPopRequest
+	lc.Name = cmd.Name
+	for _, v := range cmd.Args[:len(cmd.Args)-1] {
+		lc.Keys = append(lc.Keys, string(v))
+	}
+
+	timeout, err := strconv.ParseFloat(string(cmd.Args[len(cmd.Args)-1]), 64)
+	if err != nil {
+		slog.Error("Error converting timeout to float64", "err", err)
+	}
+	lc.Timeout = timeout
+
+	listArray := h.Store.ListBlockedPop(lc)
+	var resp []byte
+	if listArray == nil {
+		resp = h.Encoder.GenerateNilBulkString()
+	} else {
+		resp = h.Encoder.GenerateArray(listArray)
+	}
+
+	return resp
+}

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -93,12 +94,10 @@ func (s *Store) ListPop(lc ListPopRequest) [][]byte {
 	if !ok {
 		return nil
 	}
-	defer func() {
-		s.listStore[lc.Key] = list
-	}()
 
 	for range lc.Count {
 		if list.Length == 0 {
+			delete(s.listStore, lc.Key)
 			return elements
 		}
 		switch lc.Name {
@@ -123,6 +122,44 @@ func (s *Store) ListPop(lc ListPopRequest) [][]byte {
 		list.Length -= 1
 	}
 
+	s.listStore[lc.Key] = list
+	return elements
+}
+
+func (s *Store) ListBlockedPop(lc ListBlockedPopRequest) [][]byte {
+	var elements [][]byte
+
+	//fire off a bunch of go routines for each key
+	//in each go routine check if any signal from communication channel, if so exit, else check to see if value can be popped
+	//if value popped send a signal to communication channel
+
+	returnChan := make(chan ([][]byte))
+	for _, key := range lc.Keys {
+		go func() {
+			for {
+				select {
+				case <-returnChan:
+					return
+				default:
+					_, ok := s.listStore[key]
+					if !ok {
+						continue
+					}
+					slog.Info("item detected", "key", key)
+					popReq := ListPopRequest{Name: "LPOP", Key: key, Count: 1}
+					go func() {
+						returnChan <- s.ListPop(popReq)
+					}()
+					return
+				}
+			}
+		}()
+	}
+
+	bytes := <-returnChan
+	for _, v := range bytes {
+		fmt.Println(string(v))
+	}
 	return elements
 }
 
