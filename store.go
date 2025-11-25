@@ -134,6 +134,7 @@ func (s *Store) ListBlockedPop(lc ListBlockedPopRequest) [][]byte {
 	//if value popped send a signal to communication channel
 
 	returnChan := make(chan ([][]byte))
+	defer close(returnChan)
 	for _, key := range lc.Keys {
 		go func() {
 			for {
@@ -147,9 +148,7 @@ func (s *Store) ListBlockedPop(lc ListBlockedPopRequest) [][]byte {
 					}
 					slog.Info("item detected", "key", key)
 					popReq := ListPopRequest{Name: "LPOP", Key: key, Count: 1}
-					go func() {
-						returnChan <- s.ListPop(popReq)
-					}()
+					returnChan <- s.ListPop(popReq)
 					return
 				}
 			}
