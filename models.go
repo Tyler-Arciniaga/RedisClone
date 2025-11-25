@@ -1,6 +1,9 @@
 package main
 
-import "time"
+import (
+	"net"
+	"time"
+)
 
 type StoreData struct {
 	data []byte
@@ -37,6 +40,7 @@ type ListPopRequest struct {
 }
 
 type ListBlockedPopRequest struct {
+	Conn    net.Conn
 	Name    string
 	Keys    []string
 	Timeout float64

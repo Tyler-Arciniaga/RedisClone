@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"log/slog"
+	"net"
 	"strconv"
 )
 
@@ -156,8 +157,9 @@ func (h *Handler) HandleListPopCommand(cmd Command) []byte {
 	return resp
 }
 
-func (h *Handler) HandleListBlockingPopCommand(cmd Command) []byte {
+func (h *Handler) HandleListBlockingPopCommand(cmd Command, conn net.Conn) []byte {
 	var lc ListBlockedPopRequest
+	lc.Conn = conn
 	lc.Name = cmd.Name
 	for _, v := range cmd.Args[:len(cmd.Args)-1] {
 		lc.Keys = append(lc.Keys, string(v))

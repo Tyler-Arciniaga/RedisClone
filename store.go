@@ -1,16 +1,17 @@
 package main
 
 import (
-	"fmt"
 	"log/slog"
+	"net"
 	"sync"
 	"time"
 )
 
 type Store struct {
-	kvStore   map[string]StoreData
-	listStore map[string]List
-	lock      sync.Mutex
+	kvStore         map[string]StoreData
+	listStore       map[string]List
+	listClientQueue map[string][]net.Conn
+	lock            sync.RWMutex
 }
 
 //TODO different mutexes for different stores
@@ -34,8 +35,8 @@ func (s *Store) SetKeyVal(r SetRequest) bool {
 }
 
 func (s *Store) GetKeyVal(key string) []byte {
-	s.lock.Lock()
-	defer s.lock.Unlock()
+	s.lock.RLock()
+	defer s.lock.RUnlock()
 
 	v, ok := s.kvStore[key]
 	if !ok || (!v.ttl.IsZero() && time.Now().After(v.ttl)) {
@@ -129,42 +130,26 @@ func (s *Store) ListPop(lc ListPopRequest) [][]byte {
 func (s *Store) ListBlockedPop(lc ListBlockedPopRequest) [][]byte {
 	var elements [][]byte
 
-	//fire off a bunch of go routines for each key
-	//in each go routine check if any signal from communication channel, if so exit, else check to see if value can be popped
-	//if value popped send a signal to communication channel
-
-	returnChan := make(chan ([][]byte))
-	defer close(returnChan)
 	for _, key := range lc.Keys {
-		go func() {
-			for {
-				select {
-				case <-returnChan:
-					return
-				default:
-					_, ok := s.listStore[key]
-					if !ok {
-						continue
-					}
-					slog.Info("item detected", "key", key)
-					popReq := ListPopRequest{Name: "LPOP", Key: key, Count: 1}
-					returnChan <- s.ListPop(popReq)
-					return
-				}
-			}
-		}()
+		if _, ok := s.listStore[key]; ok {
+			poppedKey := key
+			popped := s.ListPop(ListPopRequest{Name: "LPOP", Key: key, Count: 1})[0]
+			return [][]byte{[]byte(poppedKey), popped}
+		} else {
+			s.lock.Lock()
+			q := s.listClientQueue[key]
+			q = append(q, lc.Conn)
+			s.listClientQueue[key] = q
+			s.lock.Unlock()
+		}
 	}
 
-	bytes := <-returnChan
-	for _, v := range bytes {
-		fmt.Println(string(v))
-	}
 	return elements
 }
 
 func (s *Store) ListRange(lc ListRangeRequest) [][]byte {
-	s.lock.Lock()
-	defer s.lock.Unlock()
+	s.lock.RLock()
+	defer s.lock.RUnlock()
 
 	var elements [][]byte
 	start, end := lc.Start, lc.End
@@ -190,8 +175,8 @@ func (s *Store) ListRange(lc ListRangeRequest) [][]byte {
 }
 
 func (s *Store) ListLength(key string) int {
-	s.lock.Lock()
-	defer s.lock.Unlock()
+	s.lock.RLock()
+	defer s.lock.RUnlock()
 
 	list, ok := s.listStore[key]
 	if !ok {

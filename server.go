@@ -75,13 +75,13 @@ func (s *Server) HandleClientStream(conn net.Conn) {
 		}
 		buf = buf[consumed:]
 
-		resp := s.HandleParsedCommands(cmd)
+		resp := s.HandleParsedCommands(cmd, conn)
 		conn.Write(resp)
 
 	}
 }
 
-func (s *Server) HandleParsedCommands(cmd Command) []byte {
+func (s *Server) HandleParsedCommands(cmd Command, conn net.Conn) []byte {
 	var response []byte
 	switch cmd.Name {
 	case "PING":
@@ -105,9 +105,9 @@ func (s *Server) HandleParsedCommands(cmd Command) []byte {
 	case "RPOP":
 		response = s.Handler.HandleListPopCommand(cmd)
 	case "BLPOP":
-		response = s.Handler.HandleListBlockingPopCommand(cmd)
+		response = s.Handler.HandleListBlockingPopCommand(cmd, conn)
 	case "BRPOP":
-		response = s.Handler.HandleListBlockingPopCommand(cmd)
+		response = s.Handler.HandleListBlockingPopCommand(cmd, conn)
 	}
 
 	return response
