@@ -2,19 +2,17 @@ package main
 
 import (
 	"log/slog"
-	"net"
 	"sync"
 	"time"
 )
 
 type Store struct {
-	kvStore         map[string]StoreData
-	listStore       map[string]List
-	listClientQueue map[string][]net.Conn
-	lock            sync.RWMutex
+	kvStore           map[string]StoreData
+	listStore         map[string]List
+	listClientQueue   map[string][]chan ([][]byte)
+	closedClientChans map[chan ([][]byte)]bool
+	lock              sync.RWMutex
 }
-
-//TODO different mutexes for different stores
 
 func (s *Store) SetKeyVal(r SetRequest) bool {
 	s.lock.Lock()
@@ -82,7 +80,45 @@ func (s *Store) ListPush(lc ListModificationRequest) int {
 
 	s.listStore[lc.Key] = list
 
+	go s.ScanClientQueue(lc.Key)
+
 	return list.Length
+}
+
+func (s *Store) ScanClientQueue(key string) {
+	for len(s.listClientQueue[key]) > 0 && s.listStore[key].Length > 0 {
+		queue, ok := s.listClientQueue[key]
+		if !ok || len(queue) == 0 {
+			return
+		}
+
+		var poppedClientChan chan ([][]byte)
+		for len(queue) > 0 {
+			poppedClientChan = queue[0]
+			if len(queue) > 1 {
+				queue = queue[1:]
+			} else {
+				queue = queue[:0]
+			}
+			s.listClientQueue[key] = queue
+
+			if _, exists := s.closedClientChans[poppedClientChan]; exists {
+				continue
+			}
+			break
+		}
+
+		if _, exists := s.closedClientChans[poppedClientChan]; exists {
+			return
+		}
+
+		poppedElement := s.ListPop(ListPopRequest{Name: "LPOP", Key: key, Count: 1})[0]
+
+		poppedClientChan <- [][]byte{[]byte(key), poppedElement}
+
+		s.closedClientChans[poppedClientChan] = true
+		close(poppedClientChan) //writer always closes channel, not reader!
+	}
 }
 
 func (s *Store) ListPop(lc ListPopRequest) [][]byte {
@@ -121,6 +157,10 @@ func (s *Store) ListPop(lc ListPopRequest) [][]byte {
 		}
 
 		list.Length -= 1
+		if list.Length == 0 {
+			delete(s.listStore, lc.Key)
+			return elements
+		}
 	}
 
 	s.listStore[lc.Key] = list
@@ -129,6 +169,7 @@ func (s *Store) ListPop(lc ListPopRequest) [][]byte {
 
 func (s *Store) ListBlockedPop(lc ListBlockedPopRequest) [][]byte {
 	var elements [][]byte
+	clientChan := make(chan ([][]byte))
 
 	for _, key := range lc.Keys {
 		if _, ok := s.listStore[key]; ok {
@@ -137,13 +178,14 @@ func (s *Store) ListBlockedPop(lc ListBlockedPopRequest) [][]byte {
 			return [][]byte{[]byte(poppedKey), popped}
 		} else {
 			s.lock.Lock()
-			q := s.listClientQueue[key]
-			q = append(q, lc.Conn)
-			s.listClientQueue[key] = q
+			queue := s.listClientQueue[key]
+			queue = append(queue, clientChan)
+			s.listClientQueue[key] = queue
 			s.lock.Unlock()
 		}
 	}
 
+	elements = <-clientChan
 	return elements
 }
 
