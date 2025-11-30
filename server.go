@@ -104,6 +104,10 @@ func (s *Server) HandleParsedCommands(cmd Command) []byte {
 		response = s.Handler.HandleListPopCommand(cmd)
 	case "RPOP":
 		response = s.Handler.HandleListPopCommand(cmd)
+	case "BLPOP":
+		response = s.Handler.HandleListBlockingPopCommand(cmd)
+	case "BRPOP":
+		response = s.Handler.HandleListBlockingPopCommand(cmd)
 	}
 
 	return response

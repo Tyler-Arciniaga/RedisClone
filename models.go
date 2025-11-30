@@ -1,6 +1,8 @@
 package main
 
-import "time"
+import (
+	"time"
+)
 
 type StoreData struct {
 	data []byte
@@ -34,4 +36,15 @@ type ListPopRequest struct {
 	Name  string
 	Key   string
 	Count int
+}
+
+type ListBlockedPopRequest struct {
+	Name    string
+	Keys    []string
+	Timeout float64
+}
+
+type BlockedPopQueueItem struct {
+	ClientChan chan ([][]byte)
+	PopType    string
 }
