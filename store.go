@@ -10,7 +10,7 @@ import (
 type Store struct {
 	kvStore           map[string]StoreData
 	listStore         map[string]List
-	listClientQueue   map[string][]chan ([][]byte)
+	listClientQueue   map[string][]BlockedPopQueueItem
 	closedClientChans map[chan ([][]byte)]bool
 	lock              sync.RWMutex
 }
@@ -58,6 +58,9 @@ func (s *Store) ListPush(lc ListModificationRequest) int {
 		switch lc.Name {
 		case "LPUSH":
 			newNode := ListNode{Data: v, Next: list.Head, Prev: nil}
+			if list.Head != nil {
+				list.Head.Prev = &newNode
+			}
 			list.Head = &newNode
 			if list.Length == 0 {
 				list.Tail = &newNode
@@ -65,7 +68,7 @@ func (s *Store) ListPush(lc ListModificationRequest) int {
 
 		case "RPUSH":
 			newNode := ListNode{Data: v, Next: nil, Prev: list.Tail}
-			if list.Length != 0 {
+			if list.Tail != nil {
 				list.Tail.Next = &newNode
 			}
 
@@ -94,8 +97,10 @@ func (s *Store) ScanClientQueue(key string) {
 		}
 
 		var poppedClientChan chan ([][]byte)
+		var popType string
 		for len(queue) > 0 {
-			poppedClientChan = queue[0]
+			queueItem := queue[0]
+			poppedClientChan, popType = queueItem.ClientChan, queueItem.PopType
 			if len(queue) > 1 {
 				queue = queue[1:]
 			} else {
@@ -113,7 +118,7 @@ func (s *Store) ScanClientQueue(key string) {
 			return
 		}
 
-		poppedElement := s.ListPop(ListPopRequest{Name: "LPOP", Key: key, Count: 1})[0]
+		poppedElement := s.ListPop(ListPopRequest{Name: popType, Key: key, Count: 1})[0]
 
 		poppedClientChan <- [][]byte{[]byte(key), poppedElement}
 
@@ -152,8 +157,8 @@ func (s *Store) ListPop(lc ListPopRequest) [][]byte {
 			prev := list.Tail.Prev
 			list.Tail.Prev = nil
 			list.Tail = prev
-			if list.Tail != nil {
-				list.Tail.Next = nil
+			if prev != nil {
+				prev.Next = nil
 			}
 		}
 
@@ -172,15 +177,16 @@ func (s *Store) ListBlockedPop(lc ListBlockedPopRequest) [][]byte {
 	var elements [][]byte
 	clientChan := make(chan ([][]byte))
 
+	popCommandName := lc.Name[1:]
+
 	for _, key := range lc.Keys {
 		if _, ok := s.listStore[key]; ok {
-			poppedKey := key
-			popped := s.ListPop(ListPopRequest{Name: "LPOP", Key: key, Count: 1})[0]
-			return [][]byte{[]byte(poppedKey), popped}
+			popped := s.ListPop(ListPopRequest{Name: popCommandName, Key: key, Count: 1})[0]
+			return [][]byte{[]byte(key), popped}
 		} else {
 			s.lock.Lock()
 			queue := s.listClientQueue[key]
-			queue = append(queue, clientChan)
+			queue = append(queue, BlockedPopQueueItem{ClientChan: clientChan, PopType: popCommandName})
 			s.listClientQueue[key] = queue
 			s.lock.Unlock()
 		}

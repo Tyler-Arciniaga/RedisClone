@@ -43,3 +43,8 @@ type ListBlockedPopRequest struct {
 	Keys    []string
 	Timeout float64
 }
+
+type BlockedPopQueueItem struct {
+	ClientChan chan ([][]byte)
+	PopType    string
+}
