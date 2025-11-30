@@ -2,9 +2,7 @@ package main
 
 import (
 	"bytes"
-	"fmt"
 	"log/slog"
-	"net"
 	"strconv"
 )
 
@@ -158,18 +156,17 @@ func (h *Handler) HandleListPopCommand(cmd Command) []byte {
 	return resp
 }
 
-func (h *Handler) HandleListBlockingPopCommand(cmd Command, conn net.Conn) []byte {
+func (h *Handler) HandleListBlockingPopCommand(cmd Command) []byte {
 	var keys []string
 	for _, v := range cmd.Args[:len(cmd.Args)-1] {
 		keys = append(keys, string(v))
 	}
-	fmt.Println(keys)
 	timeout, err := strconv.ParseFloat(string(cmd.Args[len(cmd.Args)-1]), 64)
 	if err != nil {
 		slog.Error("Error converting timeout to float64", "err", err)
 	}
 
-	listArray := h.Store.ListBlockedPop(ListBlockedPopRequest{Conn: conn, Name: cmd.Name, Keys: keys, Timeout: timeout})
+	listArray := h.Store.ListBlockedPop(ListBlockedPopRequest{Name: cmd.Name, Keys: keys, Timeout: timeout})
 
 	var resp []byte
 	if listArray == nil {

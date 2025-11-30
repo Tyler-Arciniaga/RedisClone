@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log/slog"
 	"sync"
 	"time"
@@ -116,7 +117,7 @@ func (s *Store) ScanClientQueue(key string) {
 
 		poppedClientChan <- [][]byte{[]byte(key), poppedElement}
 
-		s.closedClientChans[poppedClientChan] = true
+		s.AppendToClosedClientSet(poppedClientChan)
 		close(poppedClientChan) //writer always closes channel, not reader!
 	}
 }
@@ -185,8 +186,28 @@ func (s *Store) ListBlockedPop(lc ListBlockedPopRequest) [][]byte {
 		}
 	}
 
-	elements = <-clientChan
-	return elements
+	if lc.Timeout != 0 {
+		ctx, cancel := context.WithTimeout(context.TODO(), time.Duration(lc.Timeout)*time.Second)
+		defer cancel()
+
+		select {
+		case elements = <-clientChan:
+			s.AppendToClosedClientSet(clientChan)
+			return elements
+		case <-ctx.Done():
+			s.AppendToClosedClientSet(clientChan)
+			return nil
+		}
+	} else {
+		elements := <-clientChan
+		return elements
+	}
+}
+
+func (s *Store) AppendToClosedClientSet(c chan ([][]byte)) {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+	s.closedClientChans[c] = true
 }
 
 func (s *Store) ListRange(lc ListRangeRequest) [][]byte {
