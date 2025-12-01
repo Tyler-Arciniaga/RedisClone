@@ -4,9 +4,21 @@ import (
 	"time"
 )
 
-type StoreData struct {
-	data []byte
-	ttl  time.Time
+type RedisObject struct {
+	NativeType NativeType
+	Data       any
+}
+
+type NativeType int
+
+const (
+	Bytes NativeType = iota
+	List
+)
+
+type KV_Data struct {
+	Data []byte
+	TTL  time.Time
 }
 
 type ListNode struct {
@@ -14,7 +26,7 @@ type ListNode struct {
 	Next *ListNode
 	Prev *ListNode
 }
-type List struct {
+type ListData struct {
 	Head   *ListNode
 	Tail   *ListNode
 	Length int

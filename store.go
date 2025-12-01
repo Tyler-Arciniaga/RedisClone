@@ -2,57 +2,103 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"sync"
 	"time"
 )
 
 type Store struct {
-	kvStore           map[string]StoreData
-	listStore         map[string]List
+	store             map[string]RedisObject
 	listClientQueue   map[string][]BlockedPopQueueItem
 	closedClientChans map[chan ([][]byte)]bool
 	lock              sync.RWMutex
+}
+
+func (s *Store) GetAsBytes(key string) (KV_Data, bool, error) {
+	s.lock.RLock()
+	defer s.lock.RUnlock()
+
+	obj, ok := s.store[key]
+	if !ok {
+		return KV_Data{}, false, nil
+	}
+
+	kv, ok := obj.Data.(KV_Data)
+	if obj.NativeType != Bytes || !ok {
+		return KV_Data{}, true, errors.New("WRONGTYPE Operation against a key holding the wrong kind of value")
+	}
+
+	return kv, true, nil
+}
+
+func (s *Store) GetAsList(key string) (ListData, bool, error) {
+	s.lock.RLock()
+	defer s.lock.RUnlock()
+
+	obj, ok := s.store[key]
+	if !ok {
+		return ListData{}, false, nil
+	}
+
+	list, ok := obj.Data.(ListData)
+	if obj.NativeType != List || !ok {
+		return ListData{}, true, errors.New("WRONGTYPE Operation against a key holding the wrong kind of value")
+	}
+
+	return list, true, nil
 }
 
 func (s *Store) SetKeyVal(r SetRequest) bool {
 	s.lock.Lock()
 	defer s.lock.Unlock()
 
-	var sd StoreData
-	sd.data = r.Value
+	var kv KV_Data
+	kv.Data = r.Value
 
 	for _, v := range r.Options {
 		switch v.Name {
 		case "EX":
-			sd.ttl = time.Now().Add(time.Duration(v.Arg.(int)) * time.Second)
+			kv.TTL = time.Now().Add(time.Duration(v.Arg.(int)) * time.Second)
 		}
 	}
 
-	s.kvStore[r.Key] = sd
+	obj := RedisObject{NativeType: Bytes, Data: kv}
+
+	s.store[r.Key] = obj
 	return true
 }
 
 func (s *Store) GetKeyVal(key string) []byte {
-	s.lock.RLock()
-	defer s.lock.RUnlock()
 
-	v, ok := s.kvStore[key]
-	if !ok || (!v.ttl.IsZero() && time.Now().After(v.ttl)) {
-		delete(s.kvStore, key)
+	kvData, ok, err := s.GetAsBytes(key)
+
+	if !ok {
 		return nil
 	}
-	return v.data
+	if err != nil {
+		slog.Error(err.Error()) //TODO refactor once error functionality made (and everywhere else)
+	}
+
+	if !kvData.TTL.IsZero() && time.Now().After(kvData.TTL) {
+		delete(s.store, key)
+		return nil
+	}
+	return kvData.Data
 }
 
 func (s *Store) ListPush(lc ListModificationRequest) int {
+	list, ok, err := s.GetAsList(lc.Key)
+	if !ok {
+		list = ListData{Head: nil, Tail: nil, Length: 0} //create a new list
+	} else {
+		if err != nil {
+			slog.Error(err.Error())
+		}
+	}
+
 	s.lock.Lock()
 	defer s.lock.Unlock()
-
-	list, ok := s.listStore[lc.Key]
-	if !ok {
-		list = List{Head: nil, Tail: nil, Length: 0}
-	} //create a new list
 
 	for _, v := range lc.Values {
 		switch lc.Name {
@@ -82,15 +128,16 @@ func (s *Store) ListPush(lc ListModificationRequest) int {
 		list.Length += 1
 	}
 
-	s.listStore[lc.Key] = list
+	s.store[lc.Key] = RedisObject{NativeType: List, Data: list}
 
 	go s.ScanClientQueue(lc.Key)
 
 	return list.Length
 }
 
+// TODO refactor me to account for the generic storage
 func (s *Store) ScanClientQueue(key string) {
-	for len(s.listClientQueue[key]) > 0 && s.listStore[key].Length > 0 {
+	for len(s.listClientQueue[key]) > 0 && s.store[key].Data.(ListData).Length > 0 {
 		queue, ok := s.listClientQueue[key]
 		if !ok || len(queue) == 0 {
 			return
@@ -128,19 +175,22 @@ func (s *Store) ScanClientQueue(key string) {
 }
 
 func (s *Store) ListPop(lc ListPopRequest) [][]byte {
+	list, ok, err := s.GetAsList(lc.Key)
+	if !ok {
+		return nil
+	}
+	if err != nil {
+		slog.Error(err.Error())
+	}
+
 	s.lock.Lock()
 	defer s.lock.Unlock()
 
 	var elements [][]byte
 
-	list, ok := s.listStore[lc.Key]
-	if !ok {
-		return nil
-	}
-
 	for range lc.Count {
 		if list.Length == 0 {
-			delete(s.listStore, lc.Key)
+			delete(s.store, lc.Key)
 			return elements
 		}
 		switch lc.Name {
@@ -164,12 +214,12 @@ func (s *Store) ListPop(lc ListPopRequest) [][]byte {
 
 		list.Length -= 1
 		if list.Length == 0 {
-			delete(s.listStore, lc.Key)
+			delete(s.store, lc.Key)
 			return elements
 		}
 	}
 
-	s.listStore[lc.Key] = list
+	s.store[lc.Key] = RedisObject{NativeType: List, Data: list}
 	return elements
 }
 
@@ -180,7 +230,7 @@ func (s *Store) ListBlockedPop(lc ListBlockedPopRequest) [][]byte {
 	popCommandName := lc.Name[1:]
 
 	for _, key := range lc.Keys {
-		if _, ok := s.listStore[key]; ok {
+		if _, ok, err := s.GetAsList(key); ok && err == nil {
 			popped := s.ListPop(ListPopRequest{Name: popCommandName, Key: key, Count: 1})[0]
 			return [][]byte{[]byte(key), popped}
 		} else {
@@ -217,13 +267,13 @@ func (s *Store) AppendToClosedClientSet(c chan ([][]byte)) {
 }
 
 func (s *Store) ListRange(lc ListRangeRequest) [][]byte {
-	s.lock.RLock()
-	defer s.lock.RUnlock()
+	list, ok, err := s.GetAsList(lc.Key)
+	if err != nil {
+		slog.Error(err.Error())
+	}
 
 	var elements [][]byte
 	start, end := lc.Start, lc.End
-
-	list, ok := s.listStore[lc.Key]
 
 	if !ok || list.Length == 0 || (start > end) {
 		//return empty array (nil representation)
@@ -244,16 +294,14 @@ func (s *Store) ListRange(lc ListRangeRequest) [][]byte {
 }
 
 func (s *Store) ListLength(key string) int {
-	s.lock.RLock()
-	defer s.lock.RUnlock()
-
-	list, ok := s.listStore[key]
+	list, ok, err := s.GetAsList(key)
 	if !ok {
-		if _, ok := s.kvStore[key]; ok {
-			//TODO return formatted error here eventually instead of just 0
-			slog.Error("(error) WRONGTYPE Operation against a key holding the wrong kind of value")
-		}
 		return 0
 	}
+
+	if err != nil {
+		slog.Error("(error) WRONGTYPE Operation against a key holding the wrong kind of value")
+	}
+
 	return list.Length
 }

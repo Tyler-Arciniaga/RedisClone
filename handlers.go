@@ -48,7 +48,6 @@ func (h *Handler) HandleSetCommand(cmd Command) []byte {
 	return h.Encoder.GetSimpleStringOk()
 }
 
-// TODO fix me!!!
 func (h *Handler) ParseOptions(cmd Command) []Option {
 	var options []Option
 	switch cmd.Name {
