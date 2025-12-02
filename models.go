@@ -16,11 +16,13 @@ const (
 	List
 )
 
+// String Structs
 type KV_Data struct {
 	Data []byte
 	TTL  time.Time
 }
 
+// List Structs
 type ListNode struct {
 	Data []byte
 	Next *ListNode

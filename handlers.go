@@ -43,7 +43,10 @@ func (h *Handler) HandleEchoCommand(cmd Command) []byte {
 func (h *Handler) HandleSetCommand(cmd Command) []byte {
 	options := h.ParseOptions(cmd)
 	sr := SetRequest{Key: string(cmd.Args[0]), Value: cmd.Args[1], Options: options}
-	h.Store.SetKeyVal(sr)
+	_, err := h.Store.SetKeyVal(sr)
+	if err != nil {
+		return h.Encoder.GenerateSimpleError(err.Error())
+	}
 
 	return h.Encoder.GetSimpleStringOk()
 }
@@ -67,7 +70,10 @@ func (h *Handler) ParseOptions(cmd Command) []Option {
 
 func (h *Handler) HandleGetCommand(cmd Command) []byte {
 	key := string(cmd.Args[0])
-	v := h.Store.GetKeyVal(key)
+	v, err := h.Store.GetKeyVal(key)
+	if err != nil {
+		return h.Encoder.GenerateSimpleError(err.Error())
+	}
 	if v == nil {
 		return h.Encoder.GetNilBulkString()
 	}
@@ -82,7 +88,10 @@ func (h *Handler) HandleListPushCommand(cmd Command) []byte {
 	lc.Key = string(cmd.Args[0])
 	lc.Values = append(lc.Values, cmd.Args[1:]...)
 
-	listLength := h.Store.ListPush(lc)
+	listLength, err := h.Store.ListPush(lc)
+	if err != nil {
+		return h.Encoder.GenerateSimpleError(err.Error())
+	}
 	resp := h.Encoder.GenerateInt(listLength)
 
 	return resp
@@ -99,12 +108,18 @@ func (h *Handler) HandleListRangeCommand(cmd Command) []byte {
 		return nil
 	}
 
-	listLength := h.Store.ListLength(lc.Key)
+	listLength, err := h.Store.ListLength(lc.Key)
+	if err != nil {
+		return h.Encoder.GenerateSimpleError(err.Error())
+	}
 
 	lc.Start = h.FormatListRangeIndex(start, listLength)
 	lc.End = h.FormatListRangeIndex(end, listLength)
 
-	listArray := h.Store.ListRange(lc)
+	listArray, err := h.Store.ListRange(lc)
+	if err != nil {
+		return h.Encoder.GenerateSimpleError(err.Error())
+	}
 	resp := h.Encoder.GenerateArray(listArray)
 
 	return resp
@@ -121,7 +136,10 @@ func (h *Handler) FormatListRangeIndex(i, len int) int {
 func (h *Handler) HandleListLengthCommand(cmd Command) []byte {
 	key := string(cmd.Args[0])
 
-	listLength := h.Store.ListLength(key)
+	listLength, err := h.Store.ListLength(key)
+	if err != nil {
+		return h.Encoder.GenerateSimpleError(err.Error())
+	}
 	resp := h.Encoder.GenerateInt(listLength)
 
 	return resp
@@ -141,7 +159,10 @@ func (h *Handler) HandleListPopCommand(cmd Command) []byte {
 		lc.Count = count
 	}
 
-	listArray := h.Store.ListPop(lc)
+	listArray, err := h.Store.ListPop(lc)
+	if err != nil {
+		return h.Encoder.GenerateSimpleError(err.Error())
+	}
 
 	var resp []byte
 	if listArray == nil {
@@ -165,7 +186,10 @@ func (h *Handler) HandleListBlockingPopCommand(cmd Command) []byte {
 		slog.Error("Error converting timeout to float64", "err", err)
 	}
 
-	listArray := h.Store.ListBlockedPop(ListBlockedPopRequest{Name: cmd.Name, Keys: keys, Timeout: timeout})
+	listArray, err := h.Store.ListBlockedPop(ListBlockedPopRequest{Name: cmd.Name, Keys: keys, Timeout: timeout})
+	if err != nil {
+		return h.Encoder.GenerateSimpleError(err.Error())
+	}
 
 	var resp []byte
 	if listArray == nil {

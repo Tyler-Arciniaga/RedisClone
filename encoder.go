@@ -68,3 +68,12 @@ func (e *Encoder) GenerateSimpleString(bytes []byte) []byte {
 	out = append(out, '\r', '\n')
 	return out
 }
+
+func (e *Encoder) GenerateSimpleError(err string) []byte {
+	bytes := []byte(err)
+	out := make([]byte, 0, len(bytes)+32)
+	out = append(out, '-')
+	out = append(out, bytes...)
+	out = append(out, '\r', '\n')
+	return out
+}
