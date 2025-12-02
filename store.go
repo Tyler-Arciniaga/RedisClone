@@ -14,10 +14,8 @@ type Store struct {
 	lock              sync.RWMutex
 }
 
+// Note: This function is unsafe, it should only ever be called by a function who holds a lock
 func (s *Store) GetAsBytes(key string) (KV_Data, bool, error) {
-	s.lock.RLock()
-	defer s.lock.RUnlock()
-
 	obj, ok := s.store[key]
 	if !ok {
 		return KV_Data{}, false, nil
@@ -31,10 +29,8 @@ func (s *Store) GetAsBytes(key string) (KV_Data, bool, error) {
 	return kv, true, nil
 }
 
+// Note: This function is unsafe, it should only ever be called by a function who holds a lock
 func (s *Store) GetAsList(key string) (ListData, bool, error) {
-	s.lock.RLock()
-	defer s.lock.RUnlock()
-
 	obj, ok := s.store[key]
 	if !ok {
 		return ListData{}, false, nil
@@ -49,24 +45,19 @@ func (s *Store) GetAsList(key string) (ListData, bool, error) {
 }
 
 func (s *Store) SetKeyVal(r SetRequest) (bool, error) {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+
 	kv, _, err := s.GetAsBytes(r.Key)
 	if err != nil {
 		return false, err
 	}
-
-	s.lock.Lock()
-	defer s.lock.Unlock()
 
 	kv.Data = r.Value
 	for _, v := range r.Options {
 		switch v.Name {
 		case "EX":
 			kv.TTL = time.Now().Add(time.Duration(v.Arg.(int)) * time.Second)
-			timer := time.NewTimer(time.Duration(v.Arg.(int)) * time.Second)
-			go func() {
-				<-timer.C //blocks until timer reaches 0, then executed DeleteKey()
-				s.DeleteKey(r.Key)
-			}()
 		}
 	}
 
@@ -75,9 +66,8 @@ func (s *Store) SetKeyVal(r SetRequest) (bool, error) {
 	return true, nil
 }
 
+// Note: This function is unsafe, it should only ever be called by a function who holds a lock
 func (s *Store) DeleteKey(key string) {
-	s.lock.Lock()
-	defer s.lock.Unlock()
 	delete(s.store, key)
 }
 
@@ -91,10 +81,18 @@ func (s *Store) GetKeyVal(key string) ([]byte, error) {
 		return nil, err
 	}
 
+	if !kvData.TTL.IsZero() && time.Now().After(kvData.TTL) {
+		s.DeleteKey(key)
+		return nil, nil
+	} // Passive expiry logic
+
 	return kvData.Data, nil
 }
 
 func (s *Store) ListPush(lc ListModificationRequest) (int, error) {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+
 	list, ok, err := s.GetAsList(lc.Key)
 	if !ok {
 		list = ListData{Head: nil, Tail: nil, Length: 0} //create a new list
@@ -103,9 +101,6 @@ func (s *Store) ListPush(lc ListModificationRequest) (int, error) {
 			return 0, err
 		}
 	}
-
-	s.lock.Lock()
-	defer s.lock.Unlock()
 
 	for _, v := range lc.Values {
 		switch lc.Name {
@@ -191,6 +186,9 @@ func (s *Store) ScanClientQueue(key string) {
 }
 
 func (s *Store) ListPop(lc ListPopRequest) ([][]byte, error) {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+
 	list, ok, err := s.GetAsList(lc.Key)
 	if !ok {
 		return nil, nil
@@ -231,9 +229,6 @@ func (s *Store) ListPop(lc ListPopRequest) ([][]byte, error) {
 			return elements, nil
 		}
 	}
-
-	s.lock.Lock()
-	defer s.lock.Unlock()
 
 	s.store[lc.Key] = RedisObject{NativeType: List, Data: list}
 	return elements, nil
@@ -290,6 +285,9 @@ func (s *Store) AppendToClosedClientSet(c chan ([][]byte)) {
 }
 
 func (s *Store) ListRange(lc ListRangeRequest) ([][]byte, error) {
+	s.lock.RLock()
+	defer s.lock.RUnlock()
+
 	list, ok, err := s.GetAsList(lc.Key)
 	if err != nil {
 		return nil, err
@@ -317,6 +315,9 @@ func (s *Store) ListRange(lc ListRangeRequest) ([][]byte, error) {
 }
 
 func (s *Store) ListLength(key string) (int, error) {
+	s.lock.RLock()
+	defer s.lock.RUnlock()
+
 	list, ok, err := s.GetAsList(key)
 	if !ok {
 		return 0, nil
