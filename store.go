@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"fmt"
 	"sync"
 	"time"
 )
@@ -24,7 +23,6 @@ func (s *Store) GetAsBytes(key string) (KV_Data, bool, error) {
 		return KV_Data{}, false, nil
 	}
 
-	fmt.Println("here")
 	kv, ok := obj.Data.(KV_Data)
 	if obj.NativeType != Bytes || !ok {
 		return KV_Data{}, true, errors.New("WRONGTYPE Operation against a key holding the wrong kind of value")
@@ -64,13 +62,23 @@ func (s *Store) SetKeyVal(r SetRequest) (bool, error) {
 		switch v.Name {
 		case "EX":
 			kv.TTL = time.Now().Add(time.Duration(v.Arg.(int)) * time.Second)
+			timer := time.NewTimer(time.Duration(v.Arg.(int)) * time.Second)
+			go func() {
+				<-timer.C //blocks until timer reaches 0, then executed DeleteKey()
+				s.DeleteKey(r.Key)
+			}()
 		}
 	}
 
 	obj := RedisObject{NativeType: Bytes, Data: kv}
-
 	s.store[r.Key] = obj
 	return true, nil
+}
+
+func (s *Store) DeleteKey(key string) {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+	delete(s.store, key)
 }
 
 func (s *Store) GetKeyVal(key string) ([]byte, error) {
@@ -83,10 +91,6 @@ func (s *Store) GetKeyVal(key string) ([]byte, error) {
 		return nil, err
 	}
 
-	if !kvData.TTL.IsZero() && time.Now().After(kvData.TTL) {
-		delete(s.store, key)
-		return nil, nil
-	}
 	return kvData.Data, nil
 }
 
@@ -195,14 +199,11 @@ func (s *Store) ListPop(lc ListPopRequest) ([][]byte, error) {
 		return nil, err
 	}
 
-	s.lock.Lock()
-	defer s.lock.Unlock()
-
 	var elements [][]byte
 
 	for range lc.Count {
 		if list.Length == 0 {
-			delete(s.store, lc.Key)
+			s.DeleteKey(lc.Key)
 			return elements, nil
 		}
 		switch lc.Name {
@@ -226,10 +227,13 @@ func (s *Store) ListPop(lc ListPopRequest) ([][]byte, error) {
 
 		list.Length -= 1
 		if list.Length == 0 {
-			delete(s.store, lc.Key)
+			s.DeleteKey(lc.Key)
 			return elements, nil
 		}
 	}
+
+	s.lock.Lock()
+	defer s.lock.Unlock()
 
 	s.store[lc.Key] = RedisObject{NativeType: List, Data: list}
 	return elements, nil
