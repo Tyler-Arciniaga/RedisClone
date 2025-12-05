@@ -1,6 +1,7 @@
 package main
 
 import (
+	"container/list"
 	"time"
 )
 
@@ -52,7 +53,8 @@ type ListPopRequest struct {
 	Count int
 }
 
-type ListBlockedPopRequest struct {
+// Key-Client Queue Structs
+type BlockedListPopRequest struct {
 	Name    string
 	Keys    []string
 	Timeout float64
@@ -61,4 +63,11 @@ type ListBlockedPopRequest struct {
 type BlockedPopQueueItem struct {
 	ClientChan chan ([][]byte)
 	PopType    string
+}
+
+type Waiter struct {
+	ResponseChan    chan ([][]byte)
+	PopType         string
+	Satisfied       bool
+	CleanUpPointers map[string]*list.Element
 }

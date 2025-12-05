@@ -186,7 +186,7 @@ func (h *Handler) HandleListBlockingPopCommand(cmd Command) []byte {
 		slog.Error("Error converting timeout to float64", "err", err)
 	}
 
-	listArray, err := h.Store.ListBlockedPop(ListBlockedPopRequest{Name: cmd.Name, Keys: keys, Timeout: timeout})
+	listArray, err := h.Store.ListBlockedPop(BlockedListPopRequest{Name: cmd.Name, Keys: keys, Timeout: timeout})
 	if err != nil {
 		return h.Encoder.GenerateSimpleError(err.Error())
 	}

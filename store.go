@@ -1,15 +1,17 @@
 package main
 
 import (
+	"container/list"
 	"context"
 	"errors"
+	"log/slog"
 	"sync"
 	"time"
 )
 
 type Store struct {
 	store             map[string]RedisObject
-	listClientQueue   map[string][]BlockedPopQueueItem
+	listClientQueue   map[string]*list.List
 	closedClientChans map[chan ([][]byte)]bool
 	lock              sync.RWMutex
 }
@@ -137,52 +139,42 @@ func (s *Store) ListPush(lc ListModificationRequest) (int, error) {
 	return list.Length, nil
 }
 
+// Note: This function is unsafe, it should only ever be called by a function who holds a lock
 func (s *Store) ScanClientQueue(key string) {
 	list, _, err := s.GetAsList(key)
+	listLen := list.Length
 	if err != nil {
 		return
 	}
+	clientQueue := s.listClientQueue[key]
 
-	for len(s.listClientQueue[key]) > 0 && list.Length > 0 {
-		queue, ok := s.listClientQueue[key]
-		if !ok || len(queue) == 0 {
-			return
-		}
-
-		var poppedClientChan chan ([][]byte)
-		var popType string
-		for len(queue) > 0 {
-			queueItem := queue[0]
-			poppedClientChan, popType = queueItem.ClientChan, queueItem.PopType
-			if len(queue) > 1 {
-				queue = queue[1:]
-			} else {
-				queue = queue[:0]
-			}
-			s.lock.Lock()
-			s.listClientQueue[key] = queue
-			s.lock.Unlock()
-
-			if _, exists := s.closedClientChans[poppedClientChan]; exists {
-				continue
-			}
+	for clientQueue.Len() > 0 && listLen > 0 {
+		elt := clientQueue.Front()
+		if elt == nil {
 			break
 		}
-
-		if _, exists := s.closedClientChans[poppedClientChan]; exists {
-			return
+		waiter := clientQueue.Remove(elt).(*Waiter)
+		if waiter.Satisfied {
+			continue
 		}
-
-		poppedElement, err := s.ListPop(ListPopRequest{Name: popType, Key: key, Count: 1})
+		waiter.Satisfied = true
+		clientChan, popType := waiter.ResponseChan, waiter.PopType
+		poppedElt, err := s.ListPop(ListPopRequest{Name: popType, Key: key, Count: 1})
+		listLen-- //update local list length
 		if err != nil {
+			slog.Error(err.Error())
 			return
 		}
 
-		poppedClientChan <- [][]byte{[]byte(key), poppedElement[0]}
+		clientChan <- [][]byte{[]byte(key), poppedElt[0]}
+		close(clientChan)
 
-		s.AppendToClosedClientSet(poppedClientChan)
-		close(poppedClientChan) //writer always closes channel, not reader!
+		go s.CleanUpQueueWaiters(waiter)
 	}
+
+	s.lock.Lock()
+	s.listClientQueue[key] = clientQueue
+	s.lock.Unlock()
 }
 
 func (s *Store) ListPop(lc ListPopRequest) ([][]byte, error) {
@@ -234,11 +226,36 @@ func (s *Store) ListPop(lc ListPopRequest) ([][]byte, error) {
 	return elements, nil
 }
 
-func (s *Store) ListBlockedPop(lc ListBlockedPopRequest) ([][]byte, error) {
-	var elements [][]byte
-	clientChan := make(chan ([][]byte))
+// Note: This function is unsafe, it should only ever be called by a function who holds a lock
+func (s *Store) AddClientToQueue(key string, w *Waiter) *list.Element {
+	queue := s.listClientQueue[key]
+	if queue == nil {
+		queue = list.New()
+	}
+	p := queue.PushBack(w) //returns pointer to waiter object in key's queue
+	s.listClientQueue[key] = queue
+	return p
+}
 
+// TODO check me!!
+func (s *Store) CleanUpQueueWaiters(w *Waiter) {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+
+	for key, val := range w.CleanUpPointers {
+		list := s.listClientQueue[key]
+		list.Remove(val)
+		s.listClientQueue[key] = list
+	}
+}
+
+func (s *Store) ListBlockedPop(lc BlockedListPopRequest) ([][]byte, error) {
+	var elements [][]byte
+
+	clientChan := make(chan ([][]byte))
 	popCommandName := lc.Name[1:]
+
+	w := &Waiter{ResponseChan: clientChan, PopType: popCommandName, Satisfied: false, CleanUpPointers: make(map[string]*list.Element)}
 
 	for _, key := range lc.Keys {
 		_, ok, err := s.GetAsList(key)
@@ -250,12 +267,13 @@ func (s *Store) ListBlockedPop(lc ListBlockedPopRequest) ([][]byte, error) {
 			if err != nil {
 				return nil, err
 			}
+
+			go s.CleanUpQueueWaiters(w)
 			return [][]byte{[]byte(key), popped[0]}, nil
 		} else {
 			s.lock.Lock()
-			queue := s.listClientQueue[key]
-			queue = append(queue, BlockedPopQueueItem{ClientChan: clientChan, PopType: popCommandName})
-			s.listClientQueue[key] = queue
+			nodePtr := s.AddClientToQueue(key, w)
+			w.CleanUpPointers[key] = nodePtr
 			s.lock.Unlock()
 		}
 	}
