@@ -4,7 +4,6 @@ import (
 	"container/list"
 	"context"
 	"errors"
-	"log/slog"
 	"sync"
 	"time"
 )
@@ -74,6 +73,9 @@ func (s *Store) DeleteKey(key string) {
 }
 
 func (s *Store) GetKeyVal(key string) ([]byte, error) {
+	s.lock.RLock()
+	defer s.lock.RUnlock()
+
 	kvData, ok, err := s.GetAsBytes(key)
 
 	if !ok {
@@ -104,6 +106,7 @@ func (s *Store) ListPush(lc ListModificationRequest) (int, error) {
 		}
 	}
 
+	// *** Push all elements first (this is the way of handling variadic pushes since Redis 2.6) *** //
 	for _, v := range lc.Values {
 		switch lc.Name {
 		case "LPUSH":
@@ -132,49 +135,39 @@ func (s *Store) ListPush(lc ListModificationRequest) (int, error) {
 		list.Length += 1
 	}
 
-	s.store[lc.Key] = RedisObject{NativeType: List, Data: list}
+	//Handle client queue and possibly update the local list
+	list = s.HandleClientQueue(lc.Key, list)
 
-	go s.ScanClientQueue(lc.Key)
+	//store list back into map
+	s.store[lc.Key] = RedisObject{NativeType: List, Data: list}
 
 	return list.Length, nil
 }
 
-// Note: This function is unsafe, it should only ever be called by a function who holds a lock
-func (s *Store) ScanClientQueue(key string) {
-	list, _, err := s.GetAsList(key)
-	listLen := list.Length
-	if err != nil {
-		return
-	}
-	clientQueue := s.listClientQueue[key]
+func (s *Store) HandleClientQueue(key string, list ListData) ListData {
+	if clientQueue, ok := s.listClientQueue[key]; ok && clientQueue.Len() > 0 {
+		//while there is still clients waiting
+		for clientQueue.Len() > 0 {
+			elt := clientQueue.Front()
+			waiter := elt.Value.(*Waiter)
+			updatedList, poppedElt := s.UnsafeInternalListPop(list, 1, waiter.PopType)
+			list = updatedList
+			if poppedElt == nil {
+				return list
+			}
 
-	for clientQueue.Len() > 0 && listLen > 0 {
-		elt := clientQueue.Front()
-		if elt == nil {
-			break
-		}
-		waiter := clientQueue.Remove(elt).(*Waiter)
-		if waiter.Satisfied {
-			continue
-		}
-		waiter.Satisfied = true
-		clientChan, popType := waiter.ResponseChan, waiter.PopType
-		poppedElt, err := s.ListPop(ListPopRequest{Name: popType, Key: key, Count: 1})
-		listLen-- //update local list length
-		if err != nil {
-			slog.Error(err.Error())
-			return
-		}
+			//only once we have confirmed that an element was popped from the list do we pop from the client queue...
+			clientQueue.Remove(elt)
+			clientChan := waiter.ResponseChan
 
-		clientChan <- [][]byte{[]byte(key), poppedElt[0]}
-		close(clientChan)
+			clientChan <- [][]byte{[]byte(key), poppedElt[0]}
+			close(clientChan)
 
-		go s.CleanUpQueueWaiters(waiter)
+			s.CleanUpQueueWaiters(waiter) //clean up waiters from all other queues it is in
+		}
 	}
 
-	s.lock.Lock()
-	s.listClientQueue[key] = clientQueue
-	s.lock.Unlock()
+	return list
 }
 
 func (s *Store) ListPop(lc ListPopRequest) ([][]byte, error) {
@@ -189,14 +182,26 @@ func (s *Store) ListPop(lc ListPopRequest) ([][]byte, error) {
 		return nil, err
 	}
 
+	// Evoke internal list pop (unsafe, does not hold any lock)
+	updatedList, elements := s.UnsafeInternalListPop(list, lc.Count, lc.Name)
+	if updatedList.Length == 0 {
+		s.DeleteKey(lc.Key)
+		return elements, nil
+	}
+
+	s.store[lc.Key] = RedisObject{NativeType: List, Data: updatedList}
+	return elements, nil
+}
+
+// Note: This function is unsafe, it should only ever be called by a function who holds a lock
+func (s *Store) UnsafeInternalListPop(list ListData, count int, popType string) (ListData, [][]byte) {
 	var elements [][]byte
 
-	for range lc.Count {
+	for range count {
 		if list.Length == 0 {
-			s.DeleteKey(lc.Key)
-			return elements, nil
+			return list, elements
 		}
-		switch lc.Name {
+		switch popType {
 		case "LPOP":
 			elements = append(elements, list.Head.Data)
 			nxt := list.Head.Next
@@ -216,14 +221,9 @@ func (s *Store) ListPop(lc ListPopRequest) ([][]byte, error) {
 		}
 
 		list.Length -= 1
-		if list.Length == 0 {
-			s.DeleteKey(lc.Key)
-			return elements, nil
-		}
 	}
 
-	s.store[lc.Key] = RedisObject{NativeType: List, Data: list}
-	return elements, nil
+	return list, elements
 }
 
 // Note: This function is unsafe, it should only ever be called by a function who holds a lock
@@ -232,16 +232,13 @@ func (s *Store) AddClientToQueue(key string, w *Waiter) *list.Element {
 	if queue == nil {
 		queue = list.New()
 	}
-	p := queue.PushBack(w) //returns pointer to waiter object in key's queue
+	p := queue.PushBack(w)
 	s.listClientQueue[key] = queue
-	return p
+	return p //returns pointer to waiter object in key's queue
 }
 
-// TODO check me!!
+// Note: This function is unsafe, it should only ever be called by a function who holds a lock
 func (s *Store) CleanUpQueueWaiters(w *Waiter) {
-	s.lock.Lock()
-	defer s.lock.Unlock()
-
 	for key, val := range w.CleanUpPointers {
 		list := s.listClientQueue[key]
 		list.Remove(val)
@@ -250,6 +247,8 @@ func (s *Store) CleanUpQueueWaiters(w *Waiter) {
 }
 
 func (s *Store) ListBlockedPop(lc BlockedListPopRequest) ([][]byte, error) {
+	s.lock.Lock()
+
 	var elements [][]byte
 
 	clientChan := make(chan ([][]byte))
@@ -258,25 +257,31 @@ func (s *Store) ListBlockedPop(lc BlockedListPopRequest) ([][]byte, error) {
 	w := &Waiter{ResponseChan: clientChan, PopType: popCommandName, Satisfied: false, CleanUpPointers: make(map[string]*list.Element)}
 
 	for _, key := range lc.Keys {
-		_, ok, err := s.GetAsList(key)
+		list, ok, err := s.GetAsList(key)
 		if err != nil {
+			s.CleanUpQueueWaiters(w)
+
+			s.lock.Unlock()
 			return nil, err
 		}
-		if ok {
-			popped, err := s.ListPop(ListPopRequest{Name: popCommandName, Key: key, Count: 1})
-			if err != nil {
-				return nil, err
-			}
 
-			go s.CleanUpQueueWaiters(w)
+		// there is data in one of the requested lists...
+		if ok {
+			list, popped := s.UnsafeInternalListPop(list, 1, w.PopType)
+			s.store[key] = RedisObject{NativeType: List, Data: list}
+			s.CleanUpQueueWaiters(w)
+
+			s.lock.Unlock()
 			return [][]byte{[]byte(key), popped[0]}, nil
 		} else {
-			s.lock.Lock()
+			// add client to client queue for that specific list
 			nodePtr := s.AddClientToQueue(key, w)
 			w.CleanUpPointers[key] = nodePtr
-			s.lock.Unlock()
 		}
 	}
+
+	// dont continue holding lock after manipulating map
+	s.lock.Unlock()
 
 	if lc.Timeout != 0 {
 		ctx, cancel := context.WithTimeout(context.TODO(), time.Duration(lc.Timeout)*time.Second)
@@ -284,16 +289,24 @@ func (s *Store) ListBlockedPop(lc BlockedListPopRequest) ([][]byte, error) {
 
 		select {
 		case elements = <-clientChan:
-			s.AppendToClosedClientSet(clientChan)
+			s.CallCleanUpWaiters(w)
 			return elements, nil
 		case <-ctx.Done():
-			s.AppendToClosedClientSet(clientChan)
+			s.CallCleanUpWaiters(w)
 			return nil, nil
 		}
 	} else {
 		elements := <-clientChan
 		return elements, nil
 	}
+}
+
+// Helper function to call clean up queue waiters (must aquire lock since CleanUpQueueWaiters() is unsafe)
+func (s *Store) CallCleanUpWaiters(w *Waiter) {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+
+	s.CleanUpQueueWaiters(w)
 }
 
 func (s *Store) AppendToClosedClientSet(c chan ([][]byte)) {
