@@ -206,3 +206,8 @@ func (h *Handler) HandleListBlockingPopCommand(cmd Command) []byte {
 
 	return resp
 }
+
+// Stream commands
+func (h *Handler) HandleStreamAdd(cmd Command) []byte {
+	return nil
+}

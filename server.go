@@ -91,10 +91,12 @@ func (s *Server) HandleParsedCommands(cmd Command) []byte {
 		response = s.Handler.HandleEchoCommand(cmd)
 	case "TYPE":
 		response = s.Handler.HandleTypeCommand(cmd)
+	// String commands
 	case "SET":
 		response = s.Handler.HandleSetCommand(cmd)
 	case "GET":
 		response = s.Handler.HandleGetCommand(cmd)
+	//List commands
 	case "LPUSH":
 		response = s.Handler.HandleListPushCommand(cmd)
 	case "RPUSH":
@@ -111,6 +113,9 @@ func (s *Server) HandleParsedCommands(cmd Command) []byte {
 		response = s.Handler.HandleListBlockingPopCommand(cmd)
 	case "BRPOP":
 		response = s.Handler.HandleListBlockingPopCommand(cmd)
+	//Stream commands
+	case "XADD":
+		response = s.Handler.HandleStreamAdd(cmd)
 	default:
 		response = s.Handler.Encoder.GenerateSimpleError(fmt.Sprintf("ERR unknown command '%s'", cmd.Name))
 	}
