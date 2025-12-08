@@ -9,10 +9,18 @@ import (
 )
 
 type Store struct {
-	store             map[string]RedisObject
-	listClientQueue   map[string]*list.List
-	closedClientChans map[chan ([][]byte)]bool
-	lock              sync.RWMutex
+	store           map[string]RedisObject
+	listClientQueue map[string]*list.List
+	lock            sync.RWMutex
+}
+
+func (s *Store) DetermineDataType(key string) NativeType {
+	obj, ok := s.store[key]
+	if !ok {
+		return None
+	}
+
+	return obj.NativeType
 }
 
 // Note: This function is unsafe, it should only ever be called by a function who holds a lock
@@ -307,12 +315,6 @@ func (s *Store) CallCleanUpWaiters(w *Waiter) {
 	defer s.lock.Unlock()
 
 	s.CleanUpQueueWaiters(w)
-}
-
-func (s *Store) AppendToClosedClientSet(c chan ([][]byte)) {
-	s.lock.Lock()
-	defer s.lock.Unlock()
-	s.closedClientChans[c] = true
 }
 
 func (s *Store) ListRange(lc ListRangeRequest) ([][]byte, error) {

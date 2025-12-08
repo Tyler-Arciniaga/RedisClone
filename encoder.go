@@ -23,6 +23,22 @@ func (e *Encoder) GetNilBulkString() []byte {
 	return e.EncodingMap["nil"]
 }
 
+func (e *Encoder) GenerateTypeString(t NativeType) []byte {
+	var response []byte
+	switch t {
+	case Bytes:
+		response = e.GenerateSimpleString([]byte("string"))
+	case List:
+		response = e.GenerateSimpleString([]byte("list"))
+	case Stream:
+		response = e.GenerateSimpleString([]byte("stream"))
+	case None:
+		response = e.GenerateSimpleString([]byte("none"))
+	}
+
+	return response
+}
+
 func (e *Encoder) GenerateBulkString(bytes []byte) []byte {
 	out := make([]byte, 0, len(bytes)+32)
 	out = append(out, '$')

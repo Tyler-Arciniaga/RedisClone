@@ -15,6 +15,8 @@ type NativeType int
 const (
 	Bytes NativeType = iota
 	List
+	Stream
+	None
 )
 
 // String Structs

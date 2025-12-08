@@ -89,6 +89,8 @@ func (s *Server) HandleParsedCommands(cmd Command) []byte {
 		response = s.Handler.HandlePingCommand(cmd)
 	case "ECHO":
 		response = s.Handler.HandleEchoCommand(cmd)
+	case "TYPE":
+		response = s.Handler.HandleTypeCommand(cmd)
 	case "SET":
 		response = s.Handler.HandleSetCommand(cmd)
 	case "GET":

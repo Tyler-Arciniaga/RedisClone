@@ -6,7 +6,7 @@ import (
 	"strconv"
 )
 
-//TODO add error handling to all handler functions
+//TODO handle error check for incorrect arg length for a given command
 
 type Handler struct {
 	Store   *Store
@@ -38,6 +38,12 @@ func (h *Handler) HandlePingCommand(cmd Command) []byte {
 
 func (h *Handler) HandleEchoCommand(cmd Command) []byte {
 	return h.Encoder.GenerateBulkString(cmd.Args[0])
+}
+
+func (h *Handler) HandleTypeCommand(cmd Command) []byte {
+	key := string(cmd.Args[0])
+	nativeType := h.Store.DetermineDataType(key)
+	return h.Encoder.GenerateTypeString(nativeType)
 }
 
 func (h *Handler) HandleSetCommand(cmd Command) []byte {
