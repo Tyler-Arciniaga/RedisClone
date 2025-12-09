@@ -53,6 +53,21 @@ func (s *Store) GetAsList(key string) (ListData, bool, error) {
 	return list, true, nil
 }
 
+// Note: This function is unsafe, it should only ever be called by a function who holds a lock
+func (s *Store) GetAsStream(key string) (StreamData, bool, error) {
+	obj, ok := s.store[key]
+	if !ok {
+		return StreamData{}, false, nil
+	}
+
+	stream, ok := obj.Data.(StreamData)
+	if obj.NativeType != Stream || !ok {
+		return StreamData{}, true, errors.New("WRONGTYPE Operation against a key holding the wrong kind of value")
+	}
+
+	return stream, true, nil
+}
+
 func (s *Store) SetKeyVal(r SetRequest) (bool, error) {
 	s.lock.Lock()
 	defer s.lock.Unlock()

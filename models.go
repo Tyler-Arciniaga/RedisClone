@@ -73,3 +73,14 @@ type Waiter struct {
 	Satisfied       bool
 	CleanUpPointers map[string]*list.Element
 }
+
+// Stream structs
+type StreamData struct {
+	RadixTree     RadixTree
+	PrevEntryTime int64
+}
+type StreamAddRequest struct {
+	Key   string
+	Id    []byte
+	KvMap map[string][]byte
+}

@@ -209,5 +209,26 @@ func (h *Handler) HandleListBlockingPopCommand(cmd Command) []byte {
 
 // Stream commands
 func (h *Handler) HandleStreamAdd(cmd Command) []byte {
-	return nil
+	var sr StreamAddRequest
+	sr.Key = string(cmd.Args[0])
+	sr.Id = cmd.Args[1]
+	sr.KvMap = make(map[string][]byte)
+
+	for i := 0; i < len(cmd.Args[2:])-1; i++ {
+		if i+1 >= len(cmd.Args[2:]) {
+			slog.Error("Invalid number of arguements")
+			return nil
+		} //TODO write proper redis error here
+
+		key := string(cmd.Args[i])
+		val := cmd.Args[i+1]
+		sr.KvMap[key] = val
+	}
+
+	resp, err := h.Store.StreamAdd(sr)
+	if err != nil {
+		return h.Encoder.GenerateSimpleError(err.Error())
+	}
+
+	return h.Encoder.GenerateBulkString(resp)
 }
