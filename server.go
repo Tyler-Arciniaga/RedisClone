@@ -117,6 +117,8 @@ func (s *Server) HandleParsedCommands(cmd Command) []byte {
 	//Stream commands
 	case "XADD":
 		response = s.Handler.HandleStreamAdd(cmd)
+	case "XLEN":
+		response = s.Handler.HandleStreamLen(cmd)
 	default:
 		response = s.Handler.Encoder.GenerateSimpleError(fmt.Sprintf("ERR unknown command '%s'", cmd.Name))
 	}

@@ -1,7 +1,5 @@
 package main
 
-import "fmt"
-
 // Stream implemented using a Radix tree (space optimized Prefix Trie)
 type TrieNode struct {
 	prefix   []byte
@@ -27,38 +25,33 @@ func (r *RadixTree) ComparePrefixes(a, b []byte) int {
 
 func (r *RadixTree) Insert(s *StreamEntry) {
 	ms := s.ID.Base
-	fmt.Println(ms)
 	node := r.root
 	i := 0
 
 	for i < len(ms) {
-		fmt.Println("loop")
 		key := ms[i]
 		_, childExists := node.children[key]
 
 		if !childExists {
-			newNode := TrieNode{prefix: ms[i:], isEnd: true, children: make(map[byte]*TrieNode), entries: []*StreamEntry{s}}
-			fmt.Println("here", newNode)
+			newNode := TrieNode{prefix: ms[i:], isEnd: true, children: make(map[byte]*TrieNode), entries: []*StreamEntry{s}} // don't need to specify an entry sequence number because defaults to 0 which is valid here
 			node.children[key] = &newNode
-			fmt.Println(node)
 			return
 		}
 
 		node = node.children[key]
-		fmt.Println("here3", node)
 
 		prefixLen := r.ComparePrefixes(ms[i:], node.prefix)
 		i += prefixLen
 
 		if prefixLen == len(node.prefix) && i == len(ms) {
+			if s.ID.SequenceNum == 0 {
+				s.ID.SequenceNum = node.entries[len(node.entries)].ID.SequenceNum + 1
+			}
 			node.entries = append(node.entries, s)
-			//TODO update s.seqNum if the user did not specify an ID
-			fmt.Println(node.entries)
 			return
 		}
 
 		if prefixLen < len(node.prefix) {
-			fmt.Println("here1")
 			newChild := TrieNode{prefix: node.prefix[prefixLen:]}
 			newChild.isEnd = node.isEnd
 			newChild.children = node.children

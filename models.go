@@ -77,8 +77,10 @@ type Waiter struct {
 // Stream structs
 type StreamData struct {
 	RadixTree     RadixTree
+	Len           int
 	PrevEntryTime int64
 }
+
 type StreamAddRequest struct {
 	Key   string
 	Id    []byte

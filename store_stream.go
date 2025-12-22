@@ -19,6 +19,22 @@ type StreamEntry struct {
 	KvPairs map[string][]byte
 }
 
+func (s *Store) GetStreamLen(key string) (int, error) {
+	s.lock.RLock()
+	defer s.lock.RUnlock()
+
+	stream, ok, err := s.GetAsStream(key)
+	if !ok {
+		return 0, nil
+	} else {
+		if err != nil {
+			return 0, err
+		}
+	}
+
+	return stream.Len, nil
+}
+
 func (s *Store) StreamAdd(sr StreamAddRequest) ([]byte, error) {
 	s.lock.Lock()
 	defer s.lock.Unlock()
@@ -43,6 +59,7 @@ func (s *Store) StreamAdd(sr StreamAddRequest) ([]byte, error) {
 	stream.RadixTree.Insert(&entry)
 
 	//update store with new stream
+	stream.Len++
 	s.store[sr.Key] = RedisObject{NativeType: Stream, Data: stream}
 
 	//return the complete entry ID

@@ -232,3 +232,14 @@ func (h *Handler) HandleStreamAdd(cmd Command) []byte {
 
 	return h.Encoder.GenerateBulkString(resp)
 }
+
+func (h *Handler) HandleStreamLen(cmd Command) []byte {
+	key := string(cmd.Args[0])
+
+	resp, err := h.Store.GetStreamLen(key)
+	if err != nil {
+		return h.Encoder.GenerateSimpleError(err.Error())
+	}
+
+	return h.Encoder.GenerateInt(resp)
+}
