@@ -85,6 +85,7 @@ func (s *Server) HandleClientStream(conn net.Conn) {
 func (s *Server) HandleParsedCommands(cmd Command) []byte {
 	var response []byte
 	switch cmd.Name {
+	// Misc Commands
 	case "PING":
 		response = s.Handler.HandlePingCommand(cmd)
 	case "ECHO":

@@ -27,25 +27,38 @@ func (r *RadixTree) ComparePrefixes(a, b []byte) int {
 
 func (r *RadixTree) Insert(s *StreamEntry) {
 	ms := s.ID.Base
+	fmt.Println(ms)
 	node := r.root
 	i := 0
 
 	for i < len(ms) {
+		fmt.Println("loop")
 		key := ms[i]
 		_, childExists := node.children[key]
 
 		if !childExists {
 			newNode := TrieNode{prefix: ms[i:], isEnd: true, children: make(map[byte]*TrieNode), entries: []*StreamEntry{s}}
+			fmt.Println("here", newNode)
 			node.children[key] = &newNode
+			fmt.Println(node)
 			return
 		}
 
 		node = node.children[key]
+		fmt.Println("here3", node)
 
 		prefixLen := r.ComparePrefixes(ms[i:], node.prefix)
 		i += prefixLen
 
+		if prefixLen == len(node.prefix) && i == len(ms) {
+			node.entries = append(node.entries, s)
+			//TODO update s.seqNum if the user did not specify an ID
+			fmt.Println(node.entries)
+			return
+		}
+
 		if prefixLen < len(node.prefix) {
+			fmt.Println("here1")
 			newChild := TrieNode{prefix: node.prefix[prefixLen:]}
 			newChild.isEnd = node.isEnd
 			newChild.children = node.children
@@ -54,8 +67,9 @@ func (r *RadixTree) Insert(s *StreamEntry) {
 			node.children[newChild.prefix[0]] = &newChild
 			node.isEnd = i == len(ms)
 			if node.isEnd {
-				node.entries = append(node.entries, s)
-				fmt.Println(node.entries)
+				node.entries = []*StreamEntry{s}
+			} else {
+				node.entries = node.entries[:0] //clear the old node's entries
 			}
 		}
 	}

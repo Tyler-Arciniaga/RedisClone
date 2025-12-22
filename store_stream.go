@@ -91,7 +91,6 @@ func (s *Store) GenerateStreamEntryID(ChosenID []byte, prevEntry int64) (EntryID
 		ms = max(ms, prevEntry)
 
 		id.Base = binary.BigEndian.AppendUint64(id.Base, uint64(ms)) //stores the 8 bytes encoding of ms into the base ID
-
 	}
 
 	return id, nil
