@@ -5,19 +5,10 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"math"
 	"strconv"
 	"time"
 )
-
-type EntryID struct {
-	Base        []byte
-	SequenceNum uint16
-}
-
-type StreamEntry struct {
-	ID      EntryID
-	KvPairs map[string][]byte
-}
 
 func (s *Store) GetStreamLen(key string) (int, error) {
 	s.lock.RLock()
@@ -67,6 +58,92 @@ func (s *Store) StreamAdd(sr StreamAddRequest) ([]byte, error) {
 	return completeID, nil
 }
 
+func (s *Store) StreamRange(sr StreamRangeRequest) ([][]byte, error) {
+	s.lock.RLock()
+	defer s.lock.RUnlock()
+	stream, ok, err := s.GetAsStream(sr.Key)
+	if !ok {
+		return nil, nil //TODO might need to return empty array specifically
+	} else {
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	startID, err1 := s.NormalizeEntryID(sr.StartID, true)
+	endID, err2 := s.NormalizeEntryID(sr.EndID, false)
+	if err1 != nil || err2 != nil {
+		return nil, err1
+	}
+
+	fmt.Println(startID)
+	fmt.Println(endID)
+
+	bytes, err := stream.RadixTree.Traverse(startID, endID)
+	if err != nil {
+		return nil, err
+	}
+
+	return bytes, nil
+}
+
+func (s *Store) NormalizeEntryID(id []byte, isStart bool) (EntryID, error) {
+	var e EntryID
+	var base [8]byte
+	switch id[0] {
+	case '-':
+		binary.BigEndian.PutUint64(base[:], 0)
+		e.Base = base[:]
+		e.SequenceNum = 0
+	case '+':
+		binary.BigEndian.PutUint64(base[:], math.MaxInt64)
+		e.Base = base[:]
+		e.SequenceNum = math.MaxUint64
+	default:
+		//Handle specified entry IDs (may be partially incomplete though and missing sequence number)
+		idx := bytes.Index(id, []byte{'-'})
+		if idx != -1 {
+			baseStr := id[:idx]
+			baseInt, err := strconv.ParseUint(string(baseStr), 10, 64)
+			if err != nil {
+				return EntryID{}, errors.New("ERR invalid stream ID base")
+			}
+
+			// normalize base into 8-byte binary big-endian
+			binary.BigEndian.PutUint64(base[:], baseInt)
+			e.Base = base[:]
+
+			// parse sequence num
+			seqStr := id[idx+1:]
+			seqInt, err := strconv.ParseUint(string(seqStr), 10, 16)
+			if err != nil {
+				return EntryID{}, errors.New("ERR invalid stream ID sequence")
+			}
+			e.SequenceNum = seqInt
+
+		} else {
+			//sequence number was not specified...
+			baseStr := id[:]
+			baseInt, err := strconv.ParseUint(string(baseStr), 10, 64)
+			if err != nil {
+				return EntryID{}, errors.New("ERR invalid stream ID base")
+			}
+
+			// normalize base into 8-byte binary big-endian
+			binary.BigEndian.PutUint64(base[:], baseInt)
+			e.Base = base[:]
+
+			if isStart {
+				e.SequenceNum = 0
+			} else {
+				e.SequenceNum = math.MaxUint64
+			}
+		}
+	}
+
+	return e, nil
+}
+
 func (s *Store) FormatEntryID(e EntryID) []byte {
 	//decode binary timestamp
 	ms := binary.BigEndian.Uint64(e.Base)
@@ -102,7 +179,7 @@ func (s *Store) GenerateStreamEntryID(ChosenID []byte, prevEntry int64) (EntryID
 		}
 
 		id.Base = base[:] // always 8 bytes
-		id.SequenceNum = uint16(seqInt)
+		id.SequenceNum = seqInt
 	} else {
 		ms := time.Now().Local().UnixMilli()
 		ms = max(ms, prevEntry)

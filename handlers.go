@@ -243,3 +243,18 @@ func (h *Handler) HandleStreamLen(cmd Command) []byte {
 
 	return h.Encoder.GenerateInt(resp)
 }
+
+func (h *Handler) HandleStreamRange(cmd Command) []byte {
+	var sr StreamRangeRequest
+	sr.Key = string(cmd.Args[0])
+	sr.IsReverse = cmd.Name == "XREVRANGE"
+	sr.StartID = cmd.Args[1]
+	sr.EndID = cmd.Args[2]
+
+	resp, err := h.Store.StreamRange(sr)
+	if err != nil {
+		return h.Encoder.GenerateSimpleError(err.Error())
+	}
+
+	return h.Encoder.GenerateArray(resp)
+}

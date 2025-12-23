@@ -119,6 +119,10 @@ func (s *Server) HandleParsedCommands(cmd Command) []byte {
 		response = s.Handler.HandleStreamAdd(cmd)
 	case "XLEN":
 		response = s.Handler.HandleStreamLen(cmd)
+	case "XRANGE":
+		response = s.Handler.HandleStreamRange(cmd)
+	case "XREVRANGE":
+		response = s.Handler.HandleStreamRange(cmd)
 	default:
 		response = s.Handler.Encoder.GenerateSimpleError(fmt.Sprintf("ERR unknown command '%s'", cmd.Name))
 	}

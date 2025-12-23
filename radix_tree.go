@@ -68,6 +68,10 @@ func (r *RadixTree) Insert(s *StreamEntry) {
 	}
 }
 
+func (r *RadixTree) Traverse(StartID EntryID, EndID EntryID) ([][]byte, error) {
+	return nil, nil
+}
+
 // func (r *RadixTree) Search(id []byte) (StreamEntry, bool) {
 // 	node := r.root
 // 	i := 0

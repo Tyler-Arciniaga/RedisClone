@@ -81,8 +81,25 @@ type StreamData struct {
 	PrevEntryTime int64
 }
 
+type EntryID struct {
+	Base        []byte
+	SequenceNum uint64
+}
+
+type StreamEntry struct {
+	ID      EntryID
+	KvPairs map[string][]byte
+}
+
 type StreamAddRequest struct {
 	Key   string
 	Id    []byte
 	KvMap map[string][]byte
+}
+
+type StreamRangeRequest struct {
+	Key       string
+	IsReverse bool
+	StartID   []byte
+	EndID     []byte
 }
