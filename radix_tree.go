@@ -1,5 +1,11 @@
 package main
 
+import (
+	"bytes"
+	"encoding/binary"
+	"slices"
+)
+
 // Stream implemented using a Radix tree (space optimized Prefix Trie)
 type TrieNode struct {
 	prefix   []byte
@@ -68,8 +74,64 @@ func (r *RadixTree) Insert(s *StreamEntry) {
 	}
 }
 
-func (r *RadixTree) Traverse(StartID EntryID, EndID EntryID) ([][]byte, error) {
+func (r *RadixTree) RangeOverRadixTree(StartID EntryID, EndID EntryID) ([][]byte, error) {
+	var e *[]*StreamEntry
+	r.Traverse(r.root, []byte{}, StartID, EndID, e)
+
+	//TODO convert e which is slice of pointers to stream entries to plain slice of bytes
+
 	return nil, nil
+}
+
+func (r *RadixTree) Traverse(node *TrieNode, accumulatedPrefix []byte, StartID EntryID, EndID EntryID, e *[]*StreamEntry) {
+
+	minMS := accumulatedPrefix
+	maxMS := accumulatedPrefix
+
+	for range 8 - len(accumulatedPrefix) {
+		minMS = binary.BigEndian.AppendUint16(minMS, 0)
+		maxMS = binary.BigEndian.AppendUint16(maxMS, 15)
+	}
+
+	if cmp := bytes.Compare(maxMS, StartID.Base); cmp == -1 {
+		// maxMS is less than the startID thus we can prune this subtree and skip directly to the next child key
+		return
+	}
+
+	if cmp := bytes.Compare(minMS, EndID.Base); cmp == 1 {
+		// minMS is greater than endID therefore we haver reached the end of our traversal
+		return
+	}
+
+	if len(node.entries) != 0 {
+		b1 := bytes.Equal(accumulatedPrefix, StartID.Base)
+		b2 := bytes.Equal(accumulatedPrefix, EndID.Base)
+		if !b1 && !b2 {
+			//accumulated prefix is not equal to either start or end base IDs
+			*e = append(*e, node.entries...)
+		}
+
+		if b1 {
+			//TODO handle adding correct entries based on seq num here
+		}
+
+		if b2 {
+			//TODO handle adding correct entries based on seq num here
+		}
+	}
+
+	var keys []byte
+	for key := range node.children {
+		keys = append(keys, key)
+	}
+
+	slices.Sort(keys) //sorts children keys in place
+
+	for _, key := range keys {
+		child := node.children[key]
+		r.Traverse(child, append(accumulatedPrefix, child.prefix...), StartID, EndID, e)
+	}
+
 }
 
 // func (r *RadixTree) Search(id []byte) (StreamEntry, bool) {

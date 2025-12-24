@@ -79,7 +79,7 @@ func (s *Store) StreamRange(sr StreamRangeRequest) ([][]byte, error) {
 	fmt.Println(startID)
 	fmt.Println(endID)
 
-	bytes, err := stream.RadixTree.Traverse(startID, endID)
+	bytes, err := stream.RadixTree.RangeOverRadixTree(startID, endID)
 	if err != nil {
 		return nil, err
 	}
