@@ -2,7 +2,7 @@ package main
 
 import (
 	"bytes"
-	"encoding/binary"
+	"fmt"
 	"slices"
 )
 
@@ -57,13 +57,19 @@ func (r *RadixTree) Insert(s *StreamEntry) {
 			return
 		}
 
-		if prefixLen < len(node.prefix) {
+		if prefixLen > 0 && prefixLen < len(node.prefix) {
 			newChild := TrieNode{prefix: node.prefix[prefixLen:]}
 			newChild.isEnd = node.isEnd
-			newChild.children = node.children
 			newChild.entries = node.entries
 			node.prefix = node.prefix[:prefixLen]
+
+			newChild.children = make(map[byte]*TrieNode)
+			for k, v := range node.children {
+				newChild.children[k] = v
+			}
+			node.children = make(map[byte]*TrieNode)
 			node.children[newChild.prefix[0]] = &newChild
+
 			node.isEnd = i == len(ms)
 			if node.isEnd {
 				node.entries = []*StreamEntry{s}
@@ -75,8 +81,10 @@ func (r *RadixTree) Insert(s *StreamEntry) {
 }
 
 func (r *RadixTree) RangeOverRadixTree(StartID EntryID, EndID EntryID) ([][]byte, error) {
-	var e *[]*StreamEntry
-	r.Traverse(r.root, []byte{}, StartID, EndID, e)
+	entries := make([]*StreamEntry, 0)
+	r.Traverse(r.root, []byte{}, StartID, EndID, &entries)
+
+	fmt.Println(entries)
 
 	//TODO convert e which is slice of pointers to stream entries to plain slice of bytes
 
@@ -84,13 +92,15 @@ func (r *RadixTree) RangeOverRadixTree(StartID EntryID, EndID EntryID) ([][]byte
 }
 
 func (r *RadixTree) Traverse(node *TrieNode, accumulatedPrefix []byte, StartID EntryID, EndID EntryID, e *[]*StreamEntry) {
-
-	minMS := accumulatedPrefix
-	maxMS := accumulatedPrefix
+	if node == nil {
+		return
+	}
+	minMS := slices.Clone(accumulatedPrefix)
+	maxMS := slices.Clone(accumulatedPrefix)
 
 	for range 8 - len(accumulatedPrefix) {
-		minMS = binary.BigEndian.AppendUint16(minMS, 0)
-		maxMS = binary.BigEndian.AppendUint16(maxMS, 15)
+		minMS = append(minMS, 0x00)
+		maxMS = append(maxMS, 0xff)
 	}
 
 	if cmp := bytes.Compare(maxMS, StartID.Base); cmp == -1 {
@@ -129,9 +139,17 @@ func (r *RadixTree) Traverse(node *TrieNode, accumulatedPrefix []byte, StartID E
 
 	for _, key := range keys {
 		child := node.children[key]
-		r.Traverse(child, append(accumulatedPrefix, child.prefix...), StartID, EndID, e)
-	}
 
+		newAccumulatedPrefix := slices.Clone(accumulatedPrefix)
+		newAccumulatedPrefix = append(newAccumulatedPrefix, key)
+
+		// child.prefix already includes key[0], so we must skip it...
+		if len(child.prefix) > 1 {
+			newAccumulatedPrefix = append(newAccumulatedPrefix, child.prefix[1:]...)
+		}
+
+		r.Traverse(child, newAccumulatedPrefix, StartID, EndID, e)
+	}
 }
 
 // func (r *RadixTree) Search(id []byte) (StreamEntry, bool) {
