@@ -73,3 +73,5 @@ type Waiter struct {
 	Satisfied       bool
 	CleanUpPointers map[string]*list.Element
 }
+
+// Transaction Structs

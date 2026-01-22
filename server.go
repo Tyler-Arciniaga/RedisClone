@@ -111,6 +111,8 @@ func (s *Server) HandleParsedCommands(cmd Command) []byte {
 		response = s.Handler.HandleListBlockingPopCommand(cmd)
 	case "BRPOP":
 		response = s.Handler.HandleListBlockingPopCommand(cmd)
+	case "INCR":
+		response = s.Handler.HandleIncrCommand(cmd)
 	default:
 		response = s.Handler.Encoder.GenerateSimpleError(fmt.Sprintf("ERR unknown command '%s'", cmd.Name))
 	}

@@ -206,3 +206,15 @@ func (h *Handler) HandleListBlockingPopCommand(cmd Command) []byte {
 
 	return resp
 }
+
+// Transaction Commands
+func (h *Handler) HandleIncrCommand(cmd Command) []byte {
+	key := string(cmd.Args[0])
+	val, err := h.Store.IncrementKey(key)
+	if err != nil {
+		return h.Encoder.GenerateSimpleError(err.Error())
+	}
+
+	return h.Encoder.GenerateInt(int(val))
+
+}

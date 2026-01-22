@@ -4,6 +4,7 @@ import (
 	"container/list"
 	"context"
 	"errors"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -361,4 +362,32 @@ func (s *Store) ListLength(key string) (int, error) {
 	}
 
 	return list.Length, nil
+}
+
+func (s *Store) IncrementKey(key string) (int, error) {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+
+	kvData, ok, err := s.GetAsBytes(key)
+	if !ok {
+		// create and set to 1
+	}
+
+	if err != nil {
+		return 0, err
+	}
+
+	val, err := strconv.Atoi(string(kvData.Data))
+	if err != nil {
+		return 0, errors.New("ERROR retrieving integer value")
+	}
+
+	newVal := int(int64(val) + 1)
+
+	kvData.Data = []byte(strconv.Itoa(newVal))
+
+	obj := RedisObject{NativeType: Bytes, Data: kvData}
+	s.store[key] = obj
+
+	return newVal, nil
 }
