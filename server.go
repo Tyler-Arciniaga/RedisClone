@@ -118,6 +118,9 @@ func (s *Server) HandleClientTransaction(conn net.Conn) {
 			resp := s.Handler.DiscardCommandQueue(conn)
 			conn.Write(resp)
 			return
+		case "MULTI":
+			resp := s.Handler.Encoder.GenerateSimpleError("ERR cannot nest MULTI commands")
+			conn.Write(resp)
 		default:
 			resp := s.Handler.QueueCommand(cmd, conn)
 			conn.Write(resp)
