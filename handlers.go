@@ -257,3 +257,16 @@ func (h *Handler) GetCommandQueue(conn net.Conn) []Command {
 
 	return q
 }
+
+func (h *Handler) DiscardCommandQueue(conn net.Conn) []byte {
+	h.CommandQueueLock.Lock()
+	defer h.CommandQueueLock.Unlock()
+
+	_, ok := h.ClientCommandQueue[conn]
+	if ok {
+		delete(h.ClientCommandQueue, conn)
+	}
+
+	return h.Encoder.GetSimpleStringOk()
+
+}

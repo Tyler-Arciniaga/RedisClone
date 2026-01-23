@@ -110,32 +110,39 @@ func (s *Server) HandleClientTransaction(conn net.Conn) {
 		}
 		buf = buf[consumed:]
 
-		if cmd.Name == "EXEC" {
-			s.HandlerLock.Lock() //acquire lock on Handler to ensure that all commands in transaction are handled as one atomic unit
+		switch cmd.Name {
+		case "EXEC":
+			s.ExecuteTransaction(conn)
+			return
+		case "DISCARD":
+			resp := s.Handler.DiscardCommandQueue(conn)
+			conn.Write(resp)
+			return
+		default:
+			resp := s.Handler.QueueCommand(cmd, conn)
+			conn.Write(resp)
+		}
+	}
+}
 
-			commandQ := s.Handler.GetCommandQueue(conn)
-			if commandQ == nil {
-				resp := s.Handler.Encoder.GenerateNilArray()
-				conn.Write(resp)
-			} else {
-				var results [][]byte
-				for _, v := range commandQ {
-					isAtomic := true
-					resp := s.HandleParsedCommands(v, isAtomic) //this function already holds lock on handler thus by setting isAtomic to true it ensures that we don't also try to acquire a RLock (which would cause a deadlock)
-					results = append(results, resp)
-				}
+func (s *Server) ExecuteTransaction(conn net.Conn) {
+	s.HandlerLock.Lock() //acquire lock on Handler to ensure that all commands in transaction are handled as one atomic unit
+	defer s.HandlerLock.Unlock()
 
-				isForTransaction := true
-				resp := s.Handler.Encoder.GenerateArray(results, isForTransaction) //isForTransaction needed for some formatting input for encoder
-				conn.Write(resp)
-			}
-
-			s.HandlerLock.Unlock()
-
-			break
+	commandQ := s.Handler.GetCommandQueue(conn)
+	if commandQ == nil {
+		resp := s.Handler.Encoder.GenerateNilArray()
+		conn.Write(resp)
+	} else {
+		var results [][]byte
+		for _, v := range commandQ {
+			isAtomic := true
+			resp := s.HandleParsedCommands(v, isAtomic) //this function already holds lock on handler thus by setting isAtomic to true it ensures that we don't also try to acquire a RLock (which would cause a deadlock)
+			results = append(results, resp)
 		}
 
-		resp := s.Handler.QueueCommand(cmd, conn)
+		isForTransaction := true
+		resp := s.Handler.Encoder.GenerateArray(results, isForTransaction) //isForTransaction needed for some formatting input for encoder
 		conn.Write(resp)
 	}
 }
@@ -179,6 +186,8 @@ func (s *Server) HandleParsedCommands(cmd Command, isAtomic bool) []byte {
 	case "MULTI":
 		response = s.Handler.HandleMultiCommand(cmd)
 	case "EXEC":
+		response = s.Handler.Encoder.GenerateSimpleError("ERR client is currently not in transaction mode, enter transaction mode with MULTI command")
+	case "DISCARD":
 		response = s.Handler.Encoder.GenerateSimpleError("ERR client is currently not in transaction mode, enter transaction mode with MULTI command")
 	default:
 		response = s.Handler.Encoder.GenerateSimpleError(fmt.Sprintf("ERR unknown command '%s'", cmd.Name))
