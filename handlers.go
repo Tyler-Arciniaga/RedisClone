@@ -130,7 +130,8 @@ func (h *Handler) HandleListRangeCommand(cmd Command) []byte {
 	if err != nil {
 		return h.Encoder.GenerateSimpleError(err.Error())
 	}
-	resp := h.Encoder.GenerateArray(listArray)
+	isForTransaction := false
+	resp := h.Encoder.GenerateArray(listArray, isForTransaction)
 
 	return resp
 }
@@ -180,7 +181,8 @@ func (h *Handler) HandleListPopCommand(cmd Command) []byte {
 	} else if len(listArray) == 1 {
 		resp = h.Encoder.GenerateBulkString(listArray[0])
 	} else {
-		resp = h.Encoder.GenerateArray(listArray)
+		isForTransaction := false
+		resp = h.Encoder.GenerateArray(listArray, isForTransaction)
 	}
 
 	return resp
@@ -205,7 +207,8 @@ func (h *Handler) HandleListBlockingPopCommand(cmd Command) []byte {
 	if listArray == nil {
 		resp = h.Encoder.GenerateNilBulkString()
 	} else {
-		resp = h.Encoder.GenerateArray(listArray)
+		ifForTransaction := false
+		resp = h.Encoder.GenerateArray(listArray, ifForTransaction)
 	}
 
 	return resp

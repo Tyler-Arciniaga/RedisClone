@@ -103,9 +103,15 @@ func (s *Server) HandleClientStream(conn net.Conn) {
 						conn.Write(errBytes)
 
 					} else {
+						var results [][]byte
 						for _, v := range commandQ {
-							s.HandleParsedCommands(v)
+							resp := s.HandleParsedCommands(v)
+							results = append(results, resp)
 						}
+
+						isForTransaction := true
+						resp := s.Handler.Encoder.GenerateArray(results, isForTransaction)
+						conn.Write(resp)
 					}
 
 					break
