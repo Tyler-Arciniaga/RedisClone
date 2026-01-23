@@ -77,6 +77,14 @@ func (e *Encoder) GenerateArray(array [][]byte, isForTransaction bool) []byte {
 	return out
 }
 
+func (e *Encoder) GenerateNilArray() []byte {
+	out := make([]byte, 0)
+	out = append(out, '*')
+	out = strconv.AppendInt(out, int64(-1), 10)
+	out = append(out, '\r', '\n')
+	return out
+}
+
 func (e *Encoder) GenerateNilBulkString() []byte {
 	out := make([]byte, 0)
 	out = append(out, '$')

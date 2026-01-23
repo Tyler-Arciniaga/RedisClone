@@ -113,9 +113,10 @@ func (s *Server) HandleClientTransaction(conn net.Conn) {
 		if cmd.Name == "EXEC" {
 			s.HandlerLock.Lock() //acquire lock on Handler to ensure that all commands in transaction are handled as one atomic unit
 
-			commandQ, errBytes := s.Handler.GetCommandQueue(conn)
-			if errBytes != nil {
-				conn.Write(errBytes)
+			commandQ := s.Handler.GetCommandQueue(conn)
+			if commandQ == nil {
+				resp := s.Handler.Encoder.GenerateNilArray()
+				conn.Write(resp)
 			} else {
 				var results [][]byte
 				for _, v := range commandQ {

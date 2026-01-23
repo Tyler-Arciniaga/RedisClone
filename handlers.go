@@ -244,16 +244,16 @@ func (h *Handler) QueueCommand(cmd Command, conn net.Conn) []byte {
 	return h.Encoder.GetSimpleStringQueued()
 }
 
-func (h *Handler) GetCommandQueue(conn net.Conn) ([]Command, []byte) {
+func (h *Handler) GetCommandQueue(conn net.Conn) []Command {
 	h.CommandQueueLock.Lock()
 	defer h.CommandQueueLock.Unlock()
 
 	q, ok := h.ClientCommandQueue[conn]
 	if !ok {
-		return nil, h.Encoder.GenerateSimpleError("ERROR client executed EXEC command without first being in transaction mode with MULTI command")
+		return nil
 	}
 
 	delete(h.ClientCommandQueue, conn)
 
-	return q, nil
+	return q
 }
