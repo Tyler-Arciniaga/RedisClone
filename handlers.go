@@ -3,14 +3,18 @@ package main
 import (
 	"bytes"
 	"log/slog"
+	"net"
 	"strconv"
+	"sync"
 )
 
 //TODO handle error check for incorrect arg length for a given command
 
 type Handler struct {
-	Store   *Store
-	Encoder Encoder
+	Store              *Store
+	Encoder            Encoder
+	ClientCommandQueue map[net.Conn][]Command
+	CommandQueueLock   sync.Mutex
 }
 
 type Option struct {
@@ -126,7 +130,8 @@ func (h *Handler) HandleListRangeCommand(cmd Command) []byte {
 	if err != nil {
 		return h.Encoder.GenerateSimpleError(err.Error())
 	}
-	resp := h.Encoder.GenerateArray(listArray)
+	isForTransaction := false
+	resp := h.Encoder.GenerateArray(listArray, isForTransaction)
 
 	return resp
 }
@@ -176,7 +181,8 @@ func (h *Handler) HandleListPopCommand(cmd Command) []byte {
 	} else if len(listArray) == 1 {
 		resp = h.Encoder.GenerateBulkString(listArray[0])
 	} else {
-		resp = h.Encoder.GenerateArray(listArray)
+		isForTransaction := false
+		resp = h.Encoder.GenerateArray(listArray, isForTransaction)
 	}
 
 	return resp
@@ -201,8 +207,66 @@ func (h *Handler) HandleListBlockingPopCommand(cmd Command) []byte {
 	if listArray == nil {
 		resp = h.Encoder.GenerateNilBulkString()
 	} else {
-		resp = h.Encoder.GenerateArray(listArray)
+		ifForTransaction := false
+		resp = h.Encoder.GenerateArray(listArray, ifForTransaction)
 	}
 
 	return resp
+}
+
+// Transaction Commands
+func (h *Handler) HandleIncrCommand(cmd Command) []byte {
+	key := string(cmd.Args[0])
+	val, err := h.Store.IncrementKey(key)
+	if err != nil {
+		return h.Encoder.GenerateSimpleError(err.Error())
+	}
+
+	return h.Encoder.GenerateInt(int(val))
+}
+
+func (h *Handler) HandleMultiCommand(cmd Command) []byte {
+	return h.Encoder.GetSimpleStringOk()
+}
+
+func (h *Handler) QueueCommand(cmd Command, conn net.Conn) []byte {
+	h.CommandQueueLock.Lock()
+	defer h.CommandQueueLock.Unlock()
+
+	q, ok := h.ClientCommandQueue[conn]
+	if !ok {
+		q = []Command{}
+	}
+	q = append(q, cmd)
+
+	h.ClientCommandQueue[conn] = q
+
+	return h.Encoder.GetSimpleStringQueued()
+}
+
+func (h *Handler) GetCommandQueue(conn net.Conn) []Command {
+	h.CommandQueueLock.Lock()
+	defer h.CommandQueueLock.Unlock()
+
+	q, ok := h.ClientCommandQueue[conn]
+	if !ok {
+		return nil
+	}
+
+	delete(h.ClientCommandQueue, conn)
+
+	return q
+}
+
+func (h *Handler) DiscardCommandQueue(conn net.Conn) []byte {
+	h.CommandQueueLock.Lock()
+	defer h.CommandQueueLock.Unlock()
+
+	_, ok := h.ClientCommandQueue[conn]
+	if ok {
+		delete(h.ClientCommandQueue, conn)
+	}
+
+	return h.Encoder.GetSimpleStringOk()
+
 }

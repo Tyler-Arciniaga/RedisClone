@@ -12,7 +12,7 @@ func (e *Encoder) InitalizeEncodingMap() {
 	e.EncodingMap = make(map[string][]byte)
 	e.EncodingMap["OK"] = e.GenerateSimpleString([]byte("OK"))
 	e.EncodingMap["nil"] = e.GenerateNilBulkString()
-
+	e.EncodingMap["Queued"] = e.GenerateSimpleString([]byte("Queued"))
 }
 
 func (e *Encoder) GetSimpleStringOk() []byte {
@@ -21,6 +21,10 @@ func (e *Encoder) GetSimpleStringOk() []byte {
 
 func (e *Encoder) GetNilBulkString() []byte {
 	return e.EncodingMap["nil"]
+}
+
+func (e *Encoder) GetSimpleStringQueued() []byte {
+	return e.EncodingMap["Queued"]
 }
 
 func (e *Encoder) GenerateTypeString(t NativeType) []byte {
@@ -57,17 +61,28 @@ func (e *Encoder) GenerateInt(i int) []byte {
 	return out
 }
 
-func (e *Encoder) GenerateArray(array [][]byte) []byte {
+func (e *Encoder) GenerateArray(array [][]byte, isForTransaction bool) []byte {
 	out := make([]byte, 0, len(array)+32)
 	out = append(out, '*')
 	out = strconv.AppendInt(out, int64(len(array)), 10)
 	out = append(out, '\r', '\n')
 	for _, v := range array {
-		out = append(out, e.GenerateBulkString(v)...)
+		if isForTransaction {
+			out = append(out, v...)
+		} else {
+			out = append(out, e.GenerateBulkString(v)...)
+		}
 	}
 
 	return out
+}
 
+func (e *Encoder) GenerateNilArray() []byte {
+	out := make([]byte, 0)
+	out = append(out, '*')
+	out = strconv.AppendInt(out, int64(-1), 10)
+	out = append(out, '\r', '\n')
+	return out
 }
 
 func (e *Encoder) GenerateNilBulkString() []byte {
