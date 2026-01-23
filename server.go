@@ -5,14 +5,16 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"sync"
 )
 
 type Server struct {
-	Parser    Parser
-	Handler   *Handler
-	connSet   map[net.Conn]bool
-	joinChan  chan (net.Conn)
-	leaveChan chan (net.Conn)
+	Parser      Parser
+	Handler     *Handler
+	connSet     map[net.Conn]bool
+	joinChan    chan (net.Conn)
+	leaveChan   chan (net.Conn)
+	HandlerLock sync.RWMutex
 }
 
 //TODO instead of having a generate nil string function or using generate bulk string for an "OK" response, just have they pre-made before hand maybe in a map and then use them multiple times
@@ -76,56 +78,73 @@ func (s *Server) HandleClientStream(conn net.Conn) {
 		}
 		buf = buf[consumed:]
 
-		resp := s.HandleParsedCommands(cmd)
+		isAtomic := false
+		resp := s.HandleParsedCommands(cmd, isAtomic)
 
 		conn.Write(resp)
 
 		if cmd.Name == "MULTI" {
-			//enter transaction mode for this client and begin reading commands
-			for {
-				n, err := conn.Read(temp)
-				if err != nil {
-					slog.Error(err.Error())
-					s.leaveChan <- conn
-					return
-				}
-
-				buf = append(buf, temp[:n]...)
-				cmd, consumed, ok := s.Parser.TryParsingCommand(buf)
-				if !ok {
-					continue
-				}
-				buf = buf[consumed:]
-
-				if cmd.Name == "EXEC" {
-					commandQ, errBytes := s.Handler.ExecuteTransaction(conn)
-					if errBytes != nil {
-						conn.Write(errBytes)
-
-					} else {
-						var results [][]byte
-						for _, v := range commandQ {
-							resp := s.HandleParsedCommands(v)
-							results = append(results, resp)
-						}
-
-						isForTransaction := true
-						resp := s.Handler.Encoder.GenerateArray(results, isForTransaction)
-						conn.Write(resp)
-					}
-
-					break
-				}
-
-				resp := s.Handler.QueueCommand(cmd, conn)
-				conn.Write(resp)
-			}
+			//enter transaction mode for this client
+			s.HandleClientTransaction(conn)
 		}
 
 	}
 }
 
-func (s *Server) HandleParsedCommands(cmd Command) []byte {
+func (s *Server) HandleClientTransaction(conn net.Conn) {
+	buf := make([]byte, 4096)
+	temp := make([]byte, 4096)
+
+	for {
+		n, err := conn.Read(temp)
+		if err != nil {
+			slog.Error(err.Error())
+			s.leaveChan <- conn
+			return
+		}
+
+		buf = append(buf, temp[:n]...)
+		cmd, consumed, ok := s.Parser.TryParsingCommand(buf)
+		if !ok {
+			continue
+		}
+		buf = buf[consumed:]
+
+		if cmd.Name == "EXEC" {
+			s.HandlerLock.Lock() //acquire lock on Handler to ensure that all commands in transaction are handled as one atomic unit
+
+			commandQ, errBytes := s.Handler.GetCommandQueue(conn)
+			if errBytes != nil {
+				conn.Write(errBytes)
+			} else {
+				var results [][]byte
+				for _, v := range commandQ {
+					isAtomic := true
+					resp := s.HandleParsedCommands(v, isAtomic) //this function already holds lock on handler thus by setting isAtomic to true it ensures that we don't also try to acquire a RLock (which would cause a deadlock)
+					results = append(results, resp)
+				}
+
+				isForTransaction := true
+				resp := s.Handler.Encoder.GenerateArray(results, isForTransaction) //isForTransaction needed for some formatting input for encoder
+				conn.Write(resp)
+			}
+
+			s.HandlerLock.Unlock()
+
+			break
+		}
+
+		resp := s.Handler.QueueCommand(cmd, conn)
+		conn.Write(resp)
+	}
+}
+
+func (s *Server) HandleParsedCommands(cmd Command, isAtomic bool) []byte {
+	if !isAtomic {
+		s.HandlerLock.RLock()
+		defer s.HandlerLock.RUnlock()
+	}
+
 	var response []byte
 	switch cmd.Name {
 	case "PING":
@@ -158,6 +177,8 @@ func (s *Server) HandleParsedCommands(cmd Command) []byte {
 		response = s.Handler.HandleIncrCommand(cmd)
 	case "MULTI":
 		response = s.Handler.HandleMultiCommand(cmd)
+	case "EXEC":
+		response = s.Handler.Encoder.GenerateSimpleError("ERR client is currently not in transaction mode, enter transaction mode with MULTI command")
 	default:
 		response = s.Handler.Encoder.GenerateSimpleError(fmt.Sprintf("ERR unknown command '%s'", cmd.Name))
 	}
