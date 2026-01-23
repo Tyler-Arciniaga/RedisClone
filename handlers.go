@@ -3,14 +3,18 @@ package main
 import (
 	"bytes"
 	"log/slog"
+	"net"
 	"strconv"
+	"sync"
 )
 
 //TODO handle error check for incorrect arg length for a given command
 
 type Handler struct {
-	Store   *Store
-	Encoder Encoder
+	Store              *Store
+	Encoder            Encoder
+	ClientCommandQueue map[net.Conn][]Command
+	CommandQueueLock   sync.Mutex
 }
 
 type Option struct {
@@ -216,5 +220,37 @@ func (h *Handler) HandleIncrCommand(cmd Command) []byte {
 	}
 
 	return h.Encoder.GenerateInt(int(val))
+}
 
+func (h *Handler) HandleMultiCommand(cmd Command) []byte {
+	return h.Encoder.GetSimpleStringOk()
+}
+
+func (h *Handler) QueueCommand(cmd Command, conn net.Conn) []byte {
+	h.CommandQueueLock.Lock()
+	defer h.CommandQueueLock.Unlock()
+
+	q, ok := h.ClientCommandQueue[conn]
+	if !ok {
+		q = []Command{}
+	}
+	q = append(q, cmd)
+
+	h.ClientCommandQueue[conn] = q
+
+	return h.Encoder.GetSimpleStringQueued()
+}
+
+func (h *Handler) ExecuteTransaction(conn net.Conn) ([]Command, []byte) {
+	h.CommandQueueLock.Lock()
+	defer h.CommandQueueLock.Unlock()
+
+	q, ok := h.ClientCommandQueue[conn]
+	if !ok {
+		return nil, h.Encoder.GenerateSimpleError("ERROR client executed EXEC command without first being in transaction mode with MULTI command")
+	}
+
+	delete(h.ClientCommandQueue, conn)
+
+	return q, nil
 }

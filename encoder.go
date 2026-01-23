@@ -12,7 +12,7 @@ func (e *Encoder) InitalizeEncodingMap() {
 	e.EncodingMap = make(map[string][]byte)
 	e.EncodingMap["OK"] = e.GenerateSimpleString([]byte("OK"))
 	e.EncodingMap["nil"] = e.GenerateNilBulkString()
-
+	e.EncodingMap["Queued"] = e.GenerateSimpleString([]byte("Queued"))
 }
 
 func (e *Encoder) GetSimpleStringOk() []byte {
@@ -21,6 +21,10 @@ func (e *Encoder) GetSimpleStringOk() []byte {
 
 func (e *Encoder) GetNilBulkString() []byte {
 	return e.EncodingMap["nil"]
+}
+
+func (e *Encoder) GetSimpleStringQueued() []byte {
+	return e.EncodingMap["Queued"]
 }
 
 func (e *Encoder) GenerateTypeString(t NativeType) []byte {

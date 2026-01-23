@@ -9,7 +9,7 @@ import (
 
 type Server struct {
 	Parser    Parser
-	Handler   Handler
+	Handler   *Handler
 	connSet   map[net.Conn]bool
 	joinChan  chan (net.Conn)
 	leaveChan chan (net.Conn)
@@ -77,7 +77,44 @@ func (s *Server) HandleClientStream(conn net.Conn) {
 		buf = buf[consumed:]
 
 		resp := s.HandleParsedCommands(cmd)
+
 		conn.Write(resp)
+
+		if cmd.Name == "MULTI" {
+			//enter transaction mode for this client and begin reading commands
+			for {
+				n, err := conn.Read(temp)
+				if err != nil {
+					slog.Error(err.Error())
+					s.leaveChan <- conn
+					return
+				}
+
+				buf = append(buf, temp[:n]...)
+				cmd, consumed, ok := s.Parser.TryParsingCommand(buf)
+				if !ok {
+					continue
+				}
+				buf = buf[consumed:]
+
+				if cmd.Name == "EXEC" {
+					commandQ, errBytes := s.Handler.ExecuteTransaction(conn)
+					if errBytes != nil {
+						conn.Write(errBytes)
+
+					} else {
+						for _, v := range commandQ {
+							s.HandleParsedCommands(v)
+						}
+					}
+
+					break
+				}
+
+				resp := s.Handler.QueueCommand(cmd, conn)
+				conn.Write(resp)
+			}
+		}
 
 	}
 }
@@ -113,6 +150,8 @@ func (s *Server) HandleParsedCommands(cmd Command) []byte {
 		response = s.Handler.HandleListBlockingPopCommand(cmd)
 	case "INCR":
 		response = s.Handler.HandleIncrCommand(cmd)
+	case "MULTI":
+		response = s.Handler.HandleMultiCommand(cmd)
 	default:
 		response = s.Handler.Encoder.GenerateSimpleError(fmt.Sprintf("ERR unknown command '%s'", cmd.Name))
 	}
