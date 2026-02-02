@@ -66,7 +66,7 @@ func (s *Server) HandleClientStream(conn net.Conn) {
 	for {
 		n, err := conn.Read(temp)
 		if err != nil {
-			slog.Error(err.Error())
+			slog.Info("A client has disconnected")
 			s.leaveChan <- conn
 			return
 		}
@@ -192,6 +192,8 @@ func (s *Server) HandleParsedCommands(cmd Command, isAtomic bool) []byte {
 		response = s.Handler.Encoder.GenerateSimpleError("ERR client is currently not in transaction mode, enter transaction mode with MULTI command")
 	case "DISCARD":
 		response = s.Handler.Encoder.GenerateSimpleError("ERR client is currently not in transaction mode, enter transaction mode with MULTI command")
+	case "INFO":
+		response = s.Handler.HandleInfoCommand(cmd, len(s.connSet))
 	default:
 		response = s.Handler.Encoder.GenerateSimpleError(fmt.Sprintf("ERR unknown command '%s'", cmd.Name))
 	}

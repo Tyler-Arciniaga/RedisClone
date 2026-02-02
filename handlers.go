@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"log/slog"
 	"net"
 	"strconv"
@@ -269,4 +270,36 @@ func (h *Handler) DiscardCommandQueue(conn net.Conn) []byte {
 
 	return h.Encoder.GetSimpleStringOk()
 
+}
+
+// Replication Commands
+func (h *Handler) HandleInfoCommand(cmd Command, numClients int) []byte {
+	fmt.Println("x", numClients)
+	var req InfoRequest
+
+	serverInfoMap := make(map[string]any)
+	clientInfoMap := make(map[string]any)
+	replicationInfoMap := make(map[string]any)
+
+	clientInfoMap["num-clients"] = numClients
+	clientInfoMap["num-blocked-clients"] = h.Store.GetNumBlockedClients()
+	replicationInfoMap["role"] = "master" //TODO: change from hardcoded value once replication functionality made
+
+	if len(cmd.Args) > 0 {
+		switch string(cmd.Args[0]) {
+		case "server":
+			req.hasServer = true
+		case "client":
+			req.hasClient = true
+
+		case "replication":
+			req.hasReplication = true
+		}
+	} else {
+		req = InfoRequest{hasServer: true, hasClient: true, hasReplication: true}
+	}
+
+	req.ServerInfo = ServerInfo{ServerInfoMap: serverInfoMap, ClientInfoMap: clientInfoMap, ReplicationInfoMap: replicationInfoMap}
+
+	return h.Encoder.GetSysInfo(req)
 }

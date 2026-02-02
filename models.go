@@ -74,4 +74,16 @@ type Waiter struct {
 	CleanUpPointers map[string]*list.Element
 }
 
-// Transaction Structs
+// Replication structs
+type InfoRequest struct {
+	hasServer      bool
+	hasClient      bool
+	hasReplication bool
+	ServerInfo     ServerInfo
+} //TODO add more INFO parameters (just the basic ones for now)
+
+type ServerInfo struct {
+	ServerInfoMap      map[string]any
+	ClientInfoMap      map[string]any
+	ReplicationInfoMap map[string]any
+}

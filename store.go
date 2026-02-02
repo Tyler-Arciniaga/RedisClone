@@ -391,3 +391,7 @@ func (s *Store) IncrementKey(key string) (int, error) {
 
 	return newVal, nil
 }
+
+func (s *Store) GetNumBlockedClients() int {
+	return len(s.listClientQueue)
+}

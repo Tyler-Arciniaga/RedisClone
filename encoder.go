@@ -1,6 +1,8 @@
 package main
 
 import (
+	"fmt"
+	"runtime"
 	"strconv"
 )
 
@@ -106,5 +108,51 @@ func (e *Encoder) GenerateSimpleError(err string) []byte {
 	out = append(out, '-')
 	out = append(out, bytes...)
 	out = append(out, '\r', '\n')
+	return out
+}
+
+func (e *Encoder) GetSysInfo(req InfoRequest) []byte {
+	var data []byte
+	if req.hasServer {
+		data = append(data, e.GetServerInfo(req.ServerInfo.ServerInfoMap)...)
+	}
+	if req.hasClient {
+		data = append(data, e.GetClientInfo(req.ServerInfo.ClientInfoMap)...)
+	}
+	if req.hasReplication {
+		data = append(data, e.GetReplicationInfo(req.ServerInfo.ReplicationInfoMap)...)
+	}
+
+	return e.GenerateBulkString(data)
+}
+
+func (e *Encoder) GetServerInfo(m map[string]any) []byte {
+	out := make([]byte, 0)
+	out = append(out, []byte("# Server\n")...)
+	out = append(out, []byte("redis_clone_version:1.0\n")...)
+	out = append(out, []byte(fmt.Sprint("os:", runtime.GOOS, "\n"))...)
+	out = append(out, []byte("tcp_port:6379\n")...)
+	out = append(out, '\n')
+
+	return out
+}
+
+func (e *Encoder) GetClientInfo(m map[string]any) []byte {
+	fmt.Println(m["num-clients"])
+	out := make([]byte, 0)
+	out = append(out, []byte("# Client\n")...)
+	out = append(out, []byte(fmt.Sprint("connected_clients:", m["num-clients"], "\n"))...)
+	out = append(out, []byte(fmt.Sprint("blocked_clients:", m["num-blocked-clients"], "\n"))...)
+	out = append(out, '\n')
+
+	return out
+}
+
+func (e *Encoder) GetReplicationInfo(m map[string]any) []byte {
+	out := make([]byte, 0)
+	out = append(out, []byte("# Replication\n")...)
+	out = append(out, []byte("role:master\n")...)
+	out = append(out, '\n')
+
 	return out
 }
