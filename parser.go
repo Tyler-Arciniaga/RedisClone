@@ -1,10 +1,13 @@
 package main
 
-import "strconv"
+import (
+	"strconv"
+)
 
 type Command struct {
-	Name string
-	Args [][]byte
+	Name     string
+	Args     [][]byte
+	NumBytes int64
 }
 type Parser struct{}
 

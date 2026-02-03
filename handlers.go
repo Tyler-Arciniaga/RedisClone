@@ -295,6 +295,15 @@ func (h *Handler) HandleInfoCommand(cmd Command, serverInfo map[string]any) []by
 	return h.Encoder.GetSysInfo(req)
 }
 
-func (h *Handler) HandleReplicaOfCommand(cmd Command) []byte {
-	return nil
+func (h *Handler) HandleReplicaOfCommand(cmd Command) ([]byte, ReplicaOfRequest) {
+	var req ReplicaOfRequest
+	if len(cmd.Args) == 1 {
+		//client sent host port, therefore it wants to create replica
+		req.isNowMaster = false
+		req.hostport = string(cmd.Args[0])
+	} else {
+		//client sent REPLICAOF NO ONE, therefore it wants to establish  as master
+		req.isNowMaster = true
+	}
+	return h.Encoder.GetSimpleStringOk(), req
 }

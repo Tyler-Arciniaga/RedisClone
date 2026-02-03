@@ -6,6 +6,7 @@ import (
 	"math/rand"
 	"net"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 )
@@ -43,7 +44,7 @@ func (s *Server) GenerateReplicationID() string {
 	charset := "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 	var sb strings.Builder
 	sb.Grow(40)
-	for i := 0; i < 40; i++ {
+	for range 40 {
 		sb.WriteByte(charset[rand.Intn(len(charset))])
 	}
 
@@ -116,6 +117,8 @@ func (s *Server) HandleClientStream(conn net.Conn) {
 		if !ok {
 			continue
 		}
+
+		cmd.NumBytes = int64(consumed)
 		buf = buf[consumed:]
 
 		isAtomic := false
@@ -205,8 +208,9 @@ func (s *Server) HandleParsedCommands(cmd Command, isAtomic bool) []byte {
 		s.HandlerLock.RLock()
 		defer s.HandlerLock.RUnlock()
 	}
-
 	var response []byte
+
+	//commands that do not change data set
 	switch cmd.Name {
 	case "PING":
 		response = s.Handler.HandlePingCommand(cmd)
@@ -214,18 +218,30 @@ func (s *Server) HandleParsedCommands(cmd Command, isAtomic bool) []byte {
 		response = s.Handler.HandleEchoCommand(cmd)
 	case "TYPE":
 		response = s.Handler.HandleTypeCommand(cmd)
-	case "SET":
-		response = s.Handler.HandleSetCommand(cmd)
 	case "GET":
 		response = s.Handler.HandleGetCommand(cmd)
-	case "LPUSH":
-		response = s.Handler.HandleListPushCommand(cmd)
-	case "RPUSH":
-		response = s.Handler.HandleListPushCommand(cmd)
 	case "LRANGE":
 		response = s.Handler.HandleListRangeCommand(cmd)
 	case "LLEN":
 		response = s.Handler.HandleListLengthCommand(cmd)
+	case "INFO":
+		response = s.Handler.HandleInfoCommand(cmd, s.BundleServerInfo())
+	case "REPLICAOF":
+		resp, repStatus := s.Handler.HandleReplicaOfCommand(cmd)
+		s.HandleReplicaStatus(repStatus)
+		response = resp
+	default:
+		response = s.Handler.Encoder.GenerateSimpleError(fmt.Sprintf("ERR unknown command '%s'", cmd.Name))
+	}
+
+	//commands that do change data set
+	switch cmd.Name {
+	case "SET":
+		response = s.Handler.HandleSetCommand(cmd)
+	case "LPUSH":
+		response = s.Handler.HandleListPushCommand(cmd)
+	case "RPUSH":
+		response = s.Handler.HandleListPushCommand(cmd)
 	case "LPOP":
 		response = s.Handler.HandleListPopCommand(cmd)
 	case "RPOP":
@@ -242,13 +258,27 @@ func (s *Server) HandleParsedCommands(cmd Command, isAtomic bool) []byte {
 		response = s.Handler.Encoder.GenerateSimpleError("ERR client is currently not in transaction mode, enter transaction mode with MULTI command")
 	case "DISCARD":
 		response = s.Handler.Encoder.GenerateSimpleError("ERR client is currently not in transaction mode, enter transaction mode with MULTI command")
-	case "INFO":
-		response = s.Handler.HandleInfoCommand(cmd, s.BundleServerInfo())
-	case "REPLICAOF":
-		response = s.Handler.HandleReplicaOfCommand(cmd)
-	default:
-		response = s.Handler.Encoder.GenerateSimpleError(fmt.Sprintf("ERR unknown command '%s'", cmd.Name))
 	}
 
+	s.HandleReplicaOffset(cmd)
+
 	return response
+}
+
+func (s *Server) HandleReplicaStatus(repStatus ReplicaOfRequest) {
+	if repStatus.isNowMaster {
+		s.Role = "master"
+	} else {
+		//TODO!!!: handle hanshake -> PSYNC, etc
+	}
+}
+
+func (s *Server) HandleReplicaOffset(cmd Command) {
+	fmt.Println("checking out:", cmd.Name, ".Has offset: ", cmd.NumBytes)
+
+	writeCommands := []string{"SET", "LPUSH", "RPUSH", "LPOP", "BRPOP", "INCR", "MULTI", "EXEC", "DISCARD"}
+
+	if slices.Contains(writeCommands, cmd.Name) {
+		s.ReplicationOffset += cmd.NumBytes
+	}
 }
