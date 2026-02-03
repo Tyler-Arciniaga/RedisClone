@@ -138,7 +138,6 @@ func (e *Encoder) GetServerInfo(m map[string]any) []byte {
 }
 
 func (e *Encoder) GetClientInfo(m map[string]any) []byte {
-	fmt.Println(m["num-clients"])
 	out := make([]byte, 0)
 	out = append(out, []byte("# Client\n")...)
 	out = append(out, []byte(fmt.Sprint("connected_clients:", m["num-clients"], "\n"))...)

@@ -9,6 +9,7 @@ import (
 )
 
 type Server struct {
+	Port        string
 	Parser      Parser
 	Handler     *Handler
 	connSet     map[net.Conn]bool
@@ -17,18 +18,33 @@ type Server struct {
 	HandlerLock sync.RWMutex
 }
 
-//TODO instead of having a generate nil string function or using generate bulk string for an "OK" response, just have they pre-made before hand maybe in a map and then use them multiple times
-//TODO improve error handling
+func (s *Server) HandleCommandArgs() {
+	for i, v := range os.Args {
+		switch v {
+		case "--port":
+			if i+1 < len(os.Args) {
+				s.Port = os.Args[i+1]
+			}
+		case "--help":
+			fmt.Print("This is a redis clone made entirely in Go!\n\nCommand Flags:\n--port [port number] : to configure the listening port\n--help : You're already here!\n")
+			os.Exit(0)
+		}
+		//TODO handle more command line args
+	}
+}
 
 // Bind to port, start new tcp server, and listen for client connections
 func (s *Server) StartServer() {
-	ln, err := net.Listen("tcp", ":6379") //binds to port localhost 6379
+	s.HandleCommandArgs()
+
+	port := fmt.Sprint(":", s.Port)
+	ln, err := net.Listen("tcp", port) //binds to port localhost 6379
 	if err != nil {
 		slog.Error(err.Error())
 		os.Exit(1)
 	}
 
-	slog.Info("Now listening on port 6793")
+	slog.Info(fmt.Sprint("Now listening on port ", s.Port))
 
 	s.Handler.InitalizeHandler()
 	go s.RegisterNewConnections()

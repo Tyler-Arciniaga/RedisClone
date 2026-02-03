@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"fmt"
 	"log/slog"
 	"net"
 	"strconv"
@@ -274,7 +273,6 @@ func (h *Handler) DiscardCommandQueue(conn net.Conn) []byte {
 
 // Replication Commands
 func (h *Handler) HandleInfoCommand(cmd Command, numClients int) []byte {
-	fmt.Println("x", numClients)
 	var req InfoRequest
 
 	serverInfoMap := make(map[string]any)
