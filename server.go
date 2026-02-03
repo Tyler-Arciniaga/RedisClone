@@ -3,13 +3,19 @@ package main
 import (
 	"fmt"
 	"log/slog"
+	"math/rand"
 	"net"
 	"os"
+	"strings"
 	"sync"
 )
 
 type Server struct {
-	Port        string
+	Port              string
+	ReplicationID     string
+	ReplicationOffset int64
+	Role              string
+
 	Parser      Parser
 	Handler     *Handler
 	connSet     map[net.Conn]bool
@@ -29,13 +35,31 @@ func (s *Server) HandleCommandArgs() {
 			fmt.Print("This is a redis clone made entirely in Go!\n\nCommand Flags:\n--port [port number] : to configure the listening port\n--help : You're already here!\n")
 			os.Exit(0)
 		}
-		//TODO handle more command line args
+		//TODO handle more command line args eventually
 	}
+}
+
+func (s *Server) GenerateReplicationID() string {
+	charset := "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	var sb strings.Builder
+	sb.Grow(40)
+	for i := 0; i < 40; i++ {
+		sb.WriteByte(charset[rand.Intn(len(charset))])
+	}
+
+	return sb.String()
+}
+func (s *Server) ConfigureMasterStatus() {
+	s.Role = "master"
+	s.ReplicationID = s.GenerateReplicationID()
+	s.ReplicationOffset = 0
 }
 
 // Bind to port, start new tcp server, and listen for client connections
 func (s *Server) StartServer() {
+	// handle command line flags and default to master status (regarding master-replica hierarchy)
 	s.HandleCommandArgs()
+	s.ConfigureMasterStatus()
 
 	port := fmt.Sprint(":", s.Port)
 	ln, err := net.Listen("tcp", port) //binds to port localhost 6379
@@ -166,6 +190,16 @@ func (s *Server) ExecuteTransaction(conn net.Conn) {
 	}
 }
 
+func (s *Server) BundleServerInfo() map[string]any {
+	infoMap := make(map[string]any)
+	infoMap["tcp_port"] = s.Port
+	infoMap["connected_clients"] = len(s.connSet)
+	infoMap["role"] = s.Role
+	infoMap["master_replid"] = s.ReplicationID
+	infoMap["master_repl_offset"] = s.ReplicationOffset
+	return infoMap
+}
+
 func (s *Server) HandleParsedCommands(cmd Command, isAtomic bool) []byte {
 	if !isAtomic {
 		s.HandlerLock.RLock()
@@ -209,7 +243,9 @@ func (s *Server) HandleParsedCommands(cmd Command, isAtomic bool) []byte {
 	case "DISCARD":
 		response = s.Handler.Encoder.GenerateSimpleError("ERR client is currently not in transaction mode, enter transaction mode with MULTI command")
 	case "INFO":
-		response = s.Handler.HandleInfoCommand(cmd, len(s.connSet))
+		response = s.Handler.HandleInfoCommand(cmd, s.BundleServerInfo())
+	case "REPLICAOF":
+		response = s.Handler.HandleReplicaOfCommand(cmd)
 	default:
 		response = s.Handler.Encoder.GenerateSimpleError(fmt.Sprintf("ERR unknown command '%s'", cmd.Name))
 	}

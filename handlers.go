@@ -272,16 +272,10 @@ func (h *Handler) DiscardCommandQueue(conn net.Conn) []byte {
 }
 
 // Replication Commands
-func (h *Handler) HandleInfoCommand(cmd Command, numClients int) []byte {
-	var req InfoRequest
+func (h *Handler) HandleInfoCommand(cmd Command, serverInfo map[string]any) []byte {
+	var req InfoRequest //defaults to all booleans being false
 
-	serverInfoMap := make(map[string]any)
-	clientInfoMap := make(map[string]any)
-	replicationInfoMap := make(map[string]any)
-
-	clientInfoMap["num-clients"] = numClients
-	clientInfoMap["num-blocked-clients"] = h.Store.GetNumBlockedClients()
-	replicationInfoMap["role"] = "master" //TODO: change from hardcoded value once replication functionality made
+	serverInfo["blocked_clients"] = h.Store.GetNumBlockedClients() //need to fetch this info seperately from store
 
 	if len(cmd.Args) > 0 {
 		switch string(cmd.Args[0]) {
@@ -289,7 +283,6 @@ func (h *Handler) HandleInfoCommand(cmd Command, numClients int) []byte {
 			req.hasServer = true
 		case "client":
 			req.hasClient = true
-
 		case "replication":
 			req.hasReplication = true
 		}
@@ -297,7 +290,11 @@ func (h *Handler) HandleInfoCommand(cmd Command, numClients int) []byte {
 		req = InfoRequest{hasServer: true, hasClient: true, hasReplication: true}
 	}
 
-	req.ServerInfo = ServerInfo{ServerInfoMap: serverInfoMap, ClientInfoMap: clientInfoMap, ReplicationInfoMap: replicationInfoMap}
+	req.serverInfo = serverInfo
 
 	return h.Encoder.GetSysInfo(req)
+}
+
+func (h *Handler) HandleReplicaOfCommand(cmd Command) []byte {
+	return nil
 }

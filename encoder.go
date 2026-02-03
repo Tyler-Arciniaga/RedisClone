@@ -114,13 +114,13 @@ func (e *Encoder) GenerateSimpleError(err string) []byte {
 func (e *Encoder) GetSysInfo(req InfoRequest) []byte {
 	var data []byte
 	if req.hasServer {
-		data = append(data, e.GetServerInfo(req.ServerInfo.ServerInfoMap)...)
+		data = append(data, e.GetServerInfo(req.serverInfo)...)
 	}
 	if req.hasClient {
-		data = append(data, e.GetClientInfo(req.ServerInfo.ClientInfoMap)...)
+		data = append(data, e.GetClientInfo(req.serverInfo)...)
 	}
 	if req.hasReplication {
-		data = append(data, e.GetReplicationInfo(req.ServerInfo.ReplicationInfoMap)...)
+		data = append(data, e.GetReplicationInfo(req.serverInfo)...)
 	}
 
 	return e.GenerateBulkString(data)
@@ -129,9 +129,9 @@ func (e *Encoder) GetSysInfo(req InfoRequest) []byte {
 func (e *Encoder) GetServerInfo(m map[string]any) []byte {
 	out := make([]byte, 0)
 	out = append(out, []byte("# Server\n")...)
-	out = append(out, []byte("redis_clone_version:1.0\n")...)
+	out = append(out, []byte("redis__custom_clone_version:1.0\n")...)
 	out = append(out, []byte(fmt.Sprint("os:", runtime.GOOS, "\n"))...)
-	out = append(out, []byte("tcp_port:6379\n")...)
+	out = append(out, []byte(fmt.Sprint("tcp_port:", m["tcp_port"], "\n"))...)
 	out = append(out, '\n')
 
 	return out
@@ -140,8 +140,8 @@ func (e *Encoder) GetServerInfo(m map[string]any) []byte {
 func (e *Encoder) GetClientInfo(m map[string]any) []byte {
 	out := make([]byte, 0)
 	out = append(out, []byte("# Client\n")...)
-	out = append(out, []byte(fmt.Sprint("connected_clients:", m["num-clients"], "\n"))...)
-	out = append(out, []byte(fmt.Sprint("blocked_clients:", m["num-blocked-clients"], "\n"))...)
+	out = append(out, []byte(fmt.Sprint("connected_clients:", m["connected_clients"], "\n"))...)
+	out = append(out, []byte(fmt.Sprint("blocked_clients:", m["blocked_clients"], "\n"))...)
 	out = append(out, '\n')
 
 	return out
@@ -150,7 +150,9 @@ func (e *Encoder) GetClientInfo(m map[string]any) []byte {
 func (e *Encoder) GetReplicationInfo(m map[string]any) []byte {
 	out := make([]byte, 0)
 	out = append(out, []byte("# Replication\n")...)
-	out = append(out, []byte("role:master\n")...)
+	out = append(out, []byte(fmt.Sprint("role:", m["role"], "\n"))...)
+	out = append(out, []byte(fmt.Sprint("master_replid:", m["master_replid"], "\n"))...)
+	out = append(out, []byte(fmt.Sprint("master_repl_offset:", m["master_repl_offset"], "\n"))...)
 	out = append(out, '\n')
 
 	return out
