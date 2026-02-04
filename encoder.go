@@ -157,3 +157,9 @@ func (e *Encoder) GetReplicationInfo(m map[string]any) []byte {
 
 	return out
 }
+
+func (e *Encoder) GeneratePing() []byte {
+	command := [][]byte{[]byte("PING")}
+	isForTransaction := false
+	return e.GenerateArray(command, isForTransaction)
+}

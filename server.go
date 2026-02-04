@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"math/rand"
@@ -9,13 +10,16 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 )
 
 type Server struct {
-	Port              string
+	LocalPort         string
 	ReplicationID     string
 	ReplicationOffset int64
 	Role              string
+	MasterPort        string //may be uninitialized if role is master
+	MasterConn        net.Conn
 
 	Parser      Parser
 	Handler     *Handler
@@ -30,7 +34,7 @@ func (s *Server) HandleCommandArgs() {
 		switch v {
 		case "--port":
 			if i+1 < len(os.Args) {
-				s.Port = os.Args[i+1]
+				s.LocalPort = os.Args[i+1]
 			}
 		case "--help":
 			fmt.Print("This is a redis clone made entirely in Go!\n\nCommand Flags:\n--port [port number] : to configure the listening port\n--help : You're already here!\n")
@@ -52,8 +56,10 @@ func (s *Server) GenerateReplicationID() string {
 }
 func (s *Server) ConfigureMasterStatus() {
 	s.Role = "master"
+	s.MasterPort = ""
 	s.ReplicationID = s.GenerateReplicationID()
 	s.ReplicationOffset = 0
+	s.MasterConn = nil
 }
 
 // Bind to port, start new tcp server, and listen for client connections
@@ -62,14 +68,14 @@ func (s *Server) StartServer() {
 	s.HandleCommandArgs()
 	s.ConfigureMasterStatus()
 
-	port := fmt.Sprint(":", s.Port)
+	port := fmt.Sprint(":", s.LocalPort)
 	ln, err := net.Listen("tcp", port) //binds to port localhost 6379
 	if err != nil {
 		slog.Error(err.Error())
 		os.Exit(1)
 	}
 
-	slog.Info(fmt.Sprint("Now listening on port ", s.Port))
+	slog.Info(fmt.Sprint("Now listening on port ", s.LocalPort))
 
 	s.Handler.InitalizeHandler()
 	go s.RegisterNewConnections()
@@ -195,7 +201,7 @@ func (s *Server) ExecuteTransaction(conn net.Conn) {
 
 func (s *Server) BundleServerInfo() map[string]any {
 	infoMap := make(map[string]any)
-	infoMap["tcp_port"] = s.Port
+	infoMap["tcp_port"] = s.LocalPort
 	infoMap["connected_clients"] = len(s.connSet)
 	infoMap["role"] = s.Role
 	infoMap["master_replid"] = s.ReplicationID
@@ -265,17 +271,82 @@ func (s *Server) HandleParsedCommands(cmd Command, isAtomic bool) []byte {
 	return response
 }
 
-func (s *Server) HandleReplicaStatus(repStatus ReplicaOfRequest) {
+func (s *Server) HandleReplicaStatus(repStatus ReplicaRequest) {
 	if repStatus.isNowMaster {
-		s.Role = "master"
+		s.ConfigureMasterStatus()
 	} else {
 		//TODO!!!: handle hanshake -> PSYNC, etc
+		s.EstablishMasterHandshake(repStatus.masterPort)
+	}
+}
+
+func (s *Server) EstablishMasterHandshake(masterPort string) {
+	port := fmt.Sprintf("localhost:%s", masterPort)
+	conn, err := net.Dial("tcp", port)
+	s.MasterConn = conn
+	if err != nil {
+		slog.Error(err.Error())
+		os.Exit(1)
+	}
+
+	s.TestMasterConn()
+}
+
+func (s *Server) TestMasterConn() error {
+	bytes := s.Handler.Encoder.GeneratePing()
+
+	_, err := s.MasterConn.Write(bytes)
+	if err != nil {
+		return err
+	}
+
+	s.WaitForPong()
+
+	return nil
+}
+
+func (s *Server) WaitForPong() bool {
+	buf := make([]byte, 4096)
+
+	ctx, cancel := context.WithTimeout(context.TODO(), time.Duration(10)*time.Second) //give the master server 10 seconds to respond to PING
+	defer cancel()
+
+	pongChan := make(chan ([]byte))
+
+	go func() {
+		n, err := s.MasterConn.Read(buf)
+		if err != nil {
+			slog.Error("ERROR reading from master server connection")
+			pongChan <- nil
+		} else {
+			got := buf[:n]
+			pongChan <- got
+		}
+
+	}()
+
+	select {
+	case got := <-pongChan:
+		if got == nil {
+			return false
+		} //error recieving bytes from master connection
+
+		expect := s.Handler.Encoder.GenerateSimpleString([]byte("PONG"))
+		if eq := slices.Equal(expect, got); !eq {
+			slog.Error("ERROR recieved incorrect signal from master server after sending PING")
+			return false
+		} else {
+			slog.Info("recieved PONG signal from master server!")
+			return true
+		}
+	case <-ctx.Done():
+		slog.Error("TIMEOUT replica server did not recieve PING response in time")
+		return false
+
 	}
 }
 
 func (s *Server) HandleReplicaOffset(cmd Command) {
-	fmt.Println("checking out:", cmd.Name, ".Has offset: ", cmd.NumBytes)
-
 	writeCommands := []string{"SET", "LPUSH", "RPUSH", "LPOP", "BRPOP", "INCR", "MULTI", "EXEC", "DISCARD"}
 
 	if slices.Contains(writeCommands, cmd.Name) {

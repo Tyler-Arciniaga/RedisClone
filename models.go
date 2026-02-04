@@ -80,9 +80,9 @@ type InfoRequest struct {
 	hasClient      bool
 	hasReplication bool
 	serverInfo     map[string]any
-} //TODO add more INFO parameters (just the basic ones for now)
+} //TODO add more INFO parameters (just has the basic ones for now)
 
-type ReplicaOfRequest struct {
+type ReplicaRequest struct {
 	isNowMaster bool
-	hostport    string
+	masterPort  string
 }
