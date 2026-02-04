@@ -86,3 +86,9 @@ type ReplicaRequest struct {
 	isNowMaster bool
 	masterPort  string
 }
+
+type PsyncResponse struct {
+	isPartialResync bool
+	masterID        string
+	masterOffset    uint64
+}

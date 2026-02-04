@@ -312,8 +312,16 @@ func (h *Handler) HandleReplicaConfigCommand(cmd Command) ([]byte, []string) {
 	return h.Encoder.GetSimpleStringOk(), []string{string(cmd.Args[0]), string(cmd.Args[1])}
 }
 
-func (h *Handler) HandlePsyncCommand(cmd Command) []byte {
-	// replID := cmd.Args[0]
+func (h *Handler) HandlePsyncCommand(cmd Command, localReplID string, localReplOffset uint64) []byte {
+	var resp []byte
+	replID := cmd.Args[0]
 	// repOffset := cmd.Args[1]
-	return nil
+	if string(replID) == localReplID {
+		// this replica was once connected to local master server -> partial resync
+		resp = h.Encoder.GeneratePartialResyncResp()
+	} else {
+		// this is a new replica -> full resync
+		resp = h.Encoder.GenerateFullResyncResp(localReplID, localReplOffset)
+	}
+	return resp
 }

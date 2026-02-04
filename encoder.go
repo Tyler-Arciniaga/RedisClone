@@ -175,3 +175,15 @@ func (e *Encoder) GeneratePsync(replID string, replOffset uint64) []byte {
 	isForTransaction := false
 	return e.GenerateArray(command, isForTransaction)
 }
+
+func (e *Encoder) GenerateFullResyncResp(localReplID string, localReplOffset uint64) []byte {
+	command := [][]byte{[]byte("+FULLRESYNC"), []byte(localReplID), []byte(fmt.Sprintf("%d", localReplOffset))}
+	isForTransaction := false
+	return e.GenerateArray(command, isForTransaction)
+}
+
+func (e *Encoder) GeneratePartialResyncResp() []byte {
+	command := [][]byte{[]byte("+CONTINUE")}
+	isForTransaction := false
+	return e.GenerateArray(command, isForTransaction)
+}
