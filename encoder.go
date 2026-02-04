@@ -169,3 +169,9 @@ func (e *Encoder) GenerateReplicaConfig(localPort string) []byte {
 	isForTransaction := false
 	return e.GenerateArray(command, isForTransaction)
 }
+
+func (e *Encoder) GeneratePsync(replID string, replOffset uint64) []byte {
+	command := [][]byte{[]byte("PSYNC"), []byte(replID), []byte(fmt.Sprintf("%d", replOffset))}
+	isForTransaction := false
+	return e.GenerateArray(command, isForTransaction)
+}

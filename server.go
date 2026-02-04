@@ -17,7 +17,7 @@ import (
 type Server struct {
 	LocalPort         string
 	ReplicationID     string
-	ReplicationOffset int64
+	ReplicationOffset uint64
 	Role              string
 	MasterPort        string //may be uninitialized if role is master
 	MasterConn        net.Conn
@@ -243,6 +243,8 @@ func (s *Server) HandleParsedCommands(cmd Command, isAtomic bool) []byte {
 		var kvPair []string
 		response, kvPair = s.Handler.HandleReplicaConfigCommand(cmd)
 		s.ParseReplicaConfig(kvPair)
+	case "PSYNC":
+		response = s.Handler.HandlePsyncCommand(cmd)
 	default:
 		response = s.Handler.Encoder.GenerateSimpleError(fmt.Sprintf("ERR unknown command '%s'", cmd.Name))
 	}
@@ -298,11 +300,26 @@ func (s *Server) EstablishMasterHandshake(masterPort string) error {
 	err = s.TestMasterConn()
 	if err != nil {
 		return err
-		//TODO do something if master conn test fails
 	}
 
-	//SEND REPLCONF signal to register replica listening port with master server
+	//Send REPLCONF signal to register replica listening port with master server
 	err = s.SendReplConf()
+	if err != nil {
+		return err
+	}
+
+	err = s.SendPsync()
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (s *Server) SendPsync() error {
+	bytes := s.Handler.Encoder.GeneratePsync(s.ReplicationID, s.ReplicationOffset)
+	fmt.Println(string(bytes))
+	_, err := s.MasterConn.Write(bytes)
 	if err != nil {
 		return err
 	}
@@ -381,7 +398,7 @@ func (s *Server) HandleReplicaOffset(cmd Command) {
 	writeCommands := []string{"SET", "LPUSH", "RPUSH", "LPOP", "BRPOP", "INCR", "MULTI", "EXEC", "DISCARD"}
 
 	if slices.Contains(writeCommands, cmd.Name) {
-		s.ReplicationOffset += cmd.NumBytes
+		s.ReplicationOffset += uint64(cmd.NumBytes)
 	}
 }
 

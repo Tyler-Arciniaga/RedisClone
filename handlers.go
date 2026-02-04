@@ -311,3 +311,9 @@ func (h *Handler) HandleReplicaOfCommand(cmd Command) ([]byte, ReplicaRequest) {
 func (h *Handler) HandleReplicaConfigCommand(cmd Command) ([]byte, []string) {
 	return h.Encoder.GetSimpleStringOk(), []string{string(cmd.Args[0]), string(cmd.Args[1])}
 }
+
+func (h *Handler) HandlePsyncCommand(cmd Command) []byte {
+	// replID := cmd.Args[0]
+	// repOffset := cmd.Args[1]
+	return nil
+}
