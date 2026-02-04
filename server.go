@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math/rand"
@@ -21,12 +22,14 @@ type Server struct {
 	MasterPort        string //may be uninitialized if role is master
 	MasterConn        net.Conn
 
-	Parser      Parser
-	Handler     *Handler
-	connSet     map[net.Conn]bool
-	joinChan    chan (net.Conn)
-	leaveChan   chan (net.Conn)
-	HandlerLock sync.RWMutex
+	clientConnSet map[net.Conn]bool
+	replPortSet   map[string]bool
+	joinChan      chan (net.Conn)
+	leaveChan     chan (net.Conn)
+	HandlerLock   sync.RWMutex
+
+	Parser  Parser
+	Handler *Handler
 }
 
 func (s *Server) HandleCommandArgs() {
@@ -96,13 +99,13 @@ func (s *Server) StartServer() {
 
 func (s *Server) RegisterNewConnections() {
 	for c := range s.joinChan {
-		s.connSet[c] = true
+		s.clientConnSet[c] = true
 	}
 }
 
 func (s *Server) DisconnectConnections() {
 	for c := range s.leaveChan {
-		delete(s.connSet, c)
+		delete(s.clientConnSet, c)
 	}
 }
 
@@ -202,7 +205,7 @@ func (s *Server) ExecuteTransaction(conn net.Conn) {
 func (s *Server) BundleServerInfo() map[string]any {
 	infoMap := make(map[string]any)
 	infoMap["tcp_port"] = s.LocalPort
-	infoMap["connected_clients"] = len(s.connSet)
+	infoMap["connected_clients"] = len(s.clientConnSet)
 	infoMap["role"] = s.Role
 	infoMap["master_replid"] = s.ReplicationID
 	infoMap["master_repl_offset"] = s.ReplicationOffset
@@ -233,9 +236,13 @@ func (s *Server) HandleParsedCommands(cmd Command, isAtomic bool) []byte {
 	case "INFO":
 		response = s.Handler.HandleInfoCommand(cmd, s.BundleServerInfo())
 	case "REPLICAOF":
-		resp, repStatus := s.Handler.HandleReplicaOfCommand(cmd)
+		var repStatus ReplicaRequest
+		response, repStatus = s.Handler.HandleReplicaOfCommand(cmd)
 		s.HandleReplicaStatus(repStatus)
-		response = resp
+	case "REPLCONF":
+		var kvPair []string
+		response, kvPair = s.Handler.HandleReplicaConfigCommand(cmd)
+		s.ParseReplicaConfig(kvPair)
 	default:
 		response = s.Handler.Encoder.GenerateSimpleError(fmt.Sprintf("ERR unknown command '%s'", cmd.Name))
 	}
@@ -280,16 +287,37 @@ func (s *Server) HandleReplicaStatus(repStatus ReplicaRequest) {
 	}
 }
 
-func (s *Server) EstablishMasterHandshake(masterPort string) {
+func (s *Server) EstablishMasterHandshake(masterPort string) error {
 	port := fmt.Sprintf("localhost:%s", masterPort)
 	conn, err := net.Dial("tcp", port)
 	s.MasterConn = conn
 	if err != nil {
-		slog.Error(err.Error())
-		os.Exit(1)
+		return err
 	}
 
-	s.TestMasterConn()
+	err = s.TestMasterConn()
+	if err != nil {
+		return err
+		//TODO do something if master conn test fails
+	}
+
+	//SEND REPLCONF signal to register replica listening port with master server
+	err = s.SendReplConf()
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (s *Server) SendReplConf() error {
+	bytes := s.Handler.Encoder.GenerateReplicaConfig(s.LocalPort)
+	_, err := s.MasterConn.Write(bytes)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func (s *Server) TestMasterConn() error {
@@ -300,7 +328,10 @@ func (s *Server) TestMasterConn() error {
 		return err
 	}
 
-	s.WaitForPong()
+	ok := s.WaitForPong()
+	if !ok {
+		return errors.New("failed handshake with master server: PING was not recieved")
+	}
 
 	return nil
 }
@@ -351,5 +382,13 @@ func (s *Server) HandleReplicaOffset(cmd Command) {
 
 	if slices.Contains(writeCommands, cmd.Name) {
 		s.ReplicationOffset += cmd.NumBytes
+	}
+}
+
+func (s *Server) ParseReplicaConfig(kvPair []string) {
+	switch kvPair[0] {
+	case "listening-port":
+		s.replPortSet[kvPair[1]] = true
+		slog.Info("registered a new replica port", "port", kvPair[1])
 	}
 }

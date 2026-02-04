@@ -307,3 +307,7 @@ func (h *Handler) HandleReplicaOfCommand(cmd Command) ([]byte, ReplicaRequest) {
 	}
 	return h.Encoder.GetSimpleStringOk(), req
 }
+
+func (h *Handler) HandleReplicaConfigCommand(cmd Command) ([]byte, []string) {
+	return h.Encoder.GetSimpleStringOk(), []string{string(cmd.Args[0]), string(cmd.Args[1])}
+}

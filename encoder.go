@@ -163,3 +163,9 @@ func (e *Encoder) GeneratePing() []byte {
 	isForTransaction := false
 	return e.GenerateArray(command, isForTransaction)
 }
+
+func (e *Encoder) GenerateReplicaConfig(localPort string) []byte {
+	command := [][]byte{[]byte("REPLCONF"), []byte("listening-port"), []byte(localPort)}
+	isForTransaction := false
+	return e.GenerateArray(command, isForTransaction)
+}
