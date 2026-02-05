@@ -2,18 +2,18 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"math/rand"
 	"net"
 	"os"
 	"slices"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 )
+
+// all functions pertaining to generic / master server
 
 type Server struct {
 	LocalPort         string
@@ -24,7 +24,7 @@ type Server struct {
 	MasterConn        net.Conn
 
 	clientConnSet map[net.Conn]bool
-	replPortSet   map[string]bool
+	replPortMap   map[string]net.Conn
 	joinChan      chan (net.Conn)
 	leaveChan     chan (net.Conn)
 	HandlerLock   sync.RWMutex
@@ -58,6 +58,7 @@ func (s *Server) GenerateReplicationID() string {
 
 	return sb.String()
 }
+
 func (s *Server) ConfigureMasterStatus() {
 	s.Role = "master"
 	s.MasterPort = ""
@@ -132,7 +133,7 @@ func (s *Server) HandleClientStream(conn net.Conn) {
 		buf = buf[consumed:]
 
 		isAtomic := false
-		resp := s.HandleParsedCommands(cmd, isAtomic)
+		resp := s.HandleParsedCommands(cmd, isAtomic, conn)
 
 		conn.Write(resp)
 
@@ -193,7 +194,7 @@ func (s *Server) ExecuteTransaction(conn net.Conn) {
 		var results [][]byte
 		for _, v := range commandQ {
 			isAtomic := true
-			resp := s.HandleParsedCommands(v, isAtomic) //this function already holds lock on handler thus by setting isAtomic to true it ensures that we don't also try to acquire a RLock (which would cause a deadlock)
+			resp := s.HandleParsedCommands(v, isAtomic, conn) //this function already holds lock on handler thus by setting isAtomic to true it ensures that we don't also try to acquire a RLock (which would cause a deadlock)
 			results = append(results, resp)
 		}
 
@@ -213,7 +214,7 @@ func (s *Server) BundleServerInfo() map[string]any {
 	return infoMap
 }
 
-func (s *Server) HandleParsedCommands(cmd Command, isAtomic bool) []byte {
+func (s *Server) HandleParsedCommands(cmd Command, isAtomic bool, conn net.Conn) []byte {
 	if !isAtomic {
 		s.HandlerLock.RLock()
 		defer s.HandlerLock.RUnlock()
@@ -241,11 +242,8 @@ func (s *Server) HandleParsedCommands(cmd Command, isAtomic bool) []byte {
 		response, repStatus = s.Handler.HandleReplicaOfCommand(cmd)
 		s.HandleReplicaStatus(repStatus)
 	case "REPLCONF":
-		var kvPair []string
-		response, kvPair = s.Handler.HandleReplicaConfigCommand(cmd)
-		s.ParseReplicaConfig(kvPair)
-	case "PSYNC":
-		response = s.Handler.HandlePsyncCommand(cmd, s.ReplicationID, s.ReplicationOffset)
+		_, kvPair := s.Handler.HandleReplicaConfigCommand(cmd)
+		s.ParseReplicaConfig(kvPair, conn)
 	default:
 		response = s.Handler.Encoder.GenerateSimpleError(fmt.Sprintf("ERR unknown command '%s'", cmd.Name))
 	}
@@ -281,84 +279,57 @@ func (s *Server) HandleParsedCommands(cmd Command, isAtomic bool) []byte {
 	return response
 }
 
-func (s *Server) HandleReplicaStatus(repStatus ReplicaRequest) {
-	if repStatus.isNowMaster {
-		s.ConfigureMasterStatus()
-	} else {
-		//TODO!!!: handle hanshake -> PSYNC, etc
-		psyncResponse, err := s.EstablishMasterHandshake(repStatus.masterPort)
-		if err != nil {
-			slog.Error("Handshake with master server failed", "err", err.Error())
+func (s *Server) IncrementReplicaOffset(cmd Command) {
+	writeCommands := []string{"SET", "LPUSH", "RPUSH", "LPOP", "BRPOP", "INCR", "MULTI", "EXEC", "DISCARD"}
+
+	if slices.Contains(writeCommands, cmd.Name) {
+		s.ReplicationOffset += uint64(cmd.NumBytes)
+	}
+}
+
+func (s *Server) ParseReplicaConfig(kvPair []string, conn net.Conn) {
+	switch kvPair[0] {
+	case "listening-port":
+		s.replPortMap[kvPair[1]] = conn
+		slog.Info("registered a new replica port", "port", kvPair[1])
+
+		conn.Write(s.Handler.Encoder.GetSimpleStringOk())
+
+		//now need to wait for PSYNC exchange
+		bytes := s.WaitForBytes(conn)
+		if bytes == nil {
 			return
 		}
 
-		s.HandlePsyncResponse(psyncResponse)
+		psyncReq, _, ok := s.Parser.TryParsingCommand(bytes)
+		if !ok {
+			slog.Error("recieved invalid Psync request from replicating server")
+			return
+		}
+
+		response, needsFullResync := s.Handler.HandlePsyncCommand(psyncReq, s.ReplicationID, s.ReplicationOffset)
+		conn.Write(response)
+
+		if needsFullResync {
+			// start background process to send RDB file to replica
+		} else {
+			// stream the commands that the replica is missing and return
+		}
 	}
 }
 
-func (s *Server) HandlePsyncResponse(resp PsyncResponse) {
-	fmt.Println("Got response:", resp)
-}
-
-func (s *Server) EstablishMasterHandshake(masterPort string) (PsyncResponse, error) {
-	var psyncResp PsyncResponse
-
-	port := fmt.Sprintf("localhost:%s", masterPort)
-	conn, err := net.Dial("tcp", port)
-	s.MasterConn = conn
-	if err != nil {
-		return psyncResp, err
-	}
-
-	err = s.PingMasterConn()
-	if err != nil {
-		return psyncResp, err
-	}
-
-	//Send REPLCONF signal to register replica listening port with master server
-	err = s.SendReplConf()
-	if err != nil {
-		return psyncResp, err
-	}
-
-	psyncResp, err = s.ExchangePsync()
-	if err != nil {
-		return psyncResp, err
-	}
-
-	return psyncResp, nil
-}
-
-func (s *Server) ExchangePsync() (PsyncResponse, error) {
-	//send PSYNC command
-	var psyncResp PsyncResponse
-	bytes := s.Handler.Encoder.GeneratePsync(s.ReplicationID, s.ReplicationOffset)
-	_, err := s.MasterConn.Write(bytes)
-	if err != nil {
-		return psyncResp, err
-	}
-
-	psyncResp, err = s.WaitForPsyncResp()
-	if err != nil {
-		return psyncResp, err
-	}
-
-	return psyncResp, nil
-}
-
-func (s *Server) WaitForPsyncResp() (PsyncResponse, error) {
+func (s *Server) WaitForBytes(conn net.Conn) []byte {
 	buf := make([]byte, 4096)
-	var psyncResp PsyncResponse
 
-	ctx, cancel := context.WithTimeout(context.TODO(), time.Duration(10)*time.Second) //give the master server 10 seconds to respond to PSYNC
+	ctx, cancel := context.WithTimeout(context.TODO(), time.Duration(10)*time.Second) //give the replica server 10 seconds to respond to PING
 	defer cancel()
 
 	respChan := make(chan ([]byte))
 
 	go func() {
-		n, err := s.MasterConn.Read(buf)
+		n, err := conn.Read(buf)
 		if err != nil {
-			slog.Error("reading from master server connection", "err", err)
+			slog.Error("reading from connection", "err", err)
 			respChan <- nil
 		} else {
 			got := buf[:n]
@@ -368,123 +339,15 @@ func (s *Server) WaitForPsyncResp() (PsyncResponse, error) {
 
 	select {
 	case got := <-respChan:
-		cmd, _, ok := s.Parser.TryParsingCommand(got)
-		if !ok {
-			return psyncResp, errors.New("parsing response from master server after sending PSYNC")
-		}
-
-		var err error
-		psyncResp, err = s.CommandToPsyncResp(cmd)
-		if err != nil {
-			return psyncResp, err
-		}
-	case <-ctx.Done():
-		return psyncResp, errors.New("TIMEOUT replica server did not recieve PSYNC response in time")
-	}
-
-	return psyncResp, nil
-}
-
-func (s *Server) SendReplConf() error {
-	bytes := s.Handler.Encoder.GenerateReplicaConfig(s.LocalPort)
-	_, err := s.MasterConn.Write(bytes)
-	if err != nil {
-		return err
-	}
-
-	buf := make([]byte, 4096)
-	n, err := s.MasterConn.Read(buf)
-	if err != nil {
-		return err
-	}
-	got := buf[:n]
-	if eq := slices.Equal(got, s.Handler.Encoder.GetSimpleStringOk()); !eq {
-		return errors.New("did not recieve ok response from master after sending REPLCONF")
-	}
-
-	return nil
-}
-
-func (s *Server) PingMasterConn() error {
-	bytes := s.Handler.Encoder.GeneratePing()
-
-	_, err := s.MasterConn.Write(bytes)
-	if err != nil {
-		return err
-	}
-
-	ok := s.WaitForPong()
-	if !ok {
-		return errors.New("failed handshake with master server: PING was not recieved")
-	}
-
-	return nil
-}
-
-func (s *Server) WaitForPong() bool {
-	buf := make([]byte, 4096)
-
-	ctx, cancel := context.WithTimeout(context.TODO(), time.Duration(10)*time.Second) //give the master server 10 seconds to respond to PING
-	defer cancel()
-
-	pongChan := make(chan ([]byte))
-
-	go func() {
-		n, err := s.MasterConn.Read(buf)
-		if err != nil {
-			slog.Error("ERROR reading from master server connection")
-			pongChan <- nil
-		} else {
-			got := buf[:n]
-			pongChan <- got
-		}
-
-	}()
-
-	select {
-	case got := <-pongChan:
 		if got == nil {
-			return false
+			return nil
 		} //error recieving bytes from master connection
 
-		expect := s.Handler.Encoder.GenerateSimpleString([]byte("PONG"))
-		if eq := slices.Equal(expect, got); !eq {
-			slog.Error("ERROR recieved incorrect signal from master server after sending PING")
-			return false
-		} else {
-			slog.Info("recieved PONG signal from master server!")
-			return true
-		}
+		slog.Info("recieved expected bytes!")
+		return got
+
 	case <-ctx.Done():
-		slog.Error("TIMEOUT replica server did not recieve PING response in time")
-		return false
-
-	}
-}
-
-func (s *Server) IncrementReplicaOffset(cmd Command) {
-	writeCommands := []string{"SET", "LPUSH", "RPUSH", "LPOP", "BRPOP", "INCR", "MULTI", "EXEC", "DISCARD"}
-
-	if slices.Contains(writeCommands, cmd.Name) {
-		s.ReplicationOffset += uint64(cmd.NumBytes)
-	}
-}
-
-func (s *Server) ParseReplicaConfig(kvPair []string) {
-	switch kvPair[0] {
-	case "listening-port":
-		s.replPortSet[kvPair[1]] = true
-		slog.Info("registered a new replica port", "port", kvPair[1])
-	}
-}
-
-func (s *Server) CommandToPsyncResp(cmd Command) (PsyncResponse, error) {
-	if cmd.Name == "+CONTINUE" {
-		return PsyncResponse{isPartialResync: true}, nil
-	} else if cmd.Name == "+FULLRESYNC" {
-		masterOffset, _ := strconv.Atoi(string(cmd.Args[1]))
-		return PsyncResponse{isPartialResync: false, masterID: string(cmd.Args[0]), masterOffset: uint64(masterOffset)}, nil
-	} else {
-		return PsyncResponse{}, errors.New("recieved an invalid psync response from master server")
+		slog.Error("TIMEOUT server did not recieve expected bytes in time")
+		return nil
 	}
 }
