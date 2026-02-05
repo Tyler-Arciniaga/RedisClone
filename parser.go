@@ -72,3 +72,7 @@ func (p Parser) ReadPrefixLength(b []byte) int {
 	}
 	return numElements
 }
+
+func (p Parser) ParseReplConfig(cmd Command) []string {
+	return []string{string(cmd.Args[0]), string(cmd.Args[1])}
+}

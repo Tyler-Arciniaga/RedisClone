@@ -25,6 +25,7 @@ type Server struct {
 
 	clientConnSet map[net.Conn]bool
 	replPortMap   map[string]net.Conn
+	inProgReplSet map[net.Conn]bool
 	joinChan      chan (net.Conn)
 	leaveChan     chan (net.Conn)
 	HandlerLock   sync.RWMutex
@@ -221,8 +222,8 @@ func (s *Server) HandleParsedCommands(cmd Command, isAtomic bool, conn net.Conn)
 	}
 	var response []byte
 
-	//commands that do not change local data
 	switch cmd.Name {
+	//commands that do not change local data
 	case "PING":
 		response = s.Handler.HandlePingCommand(cmd)
 	case "ECHO":
@@ -242,14 +243,10 @@ func (s *Server) HandleParsedCommands(cmd Command, isAtomic bool, conn net.Conn)
 		response, repStatus = s.Handler.HandleReplicaOfCommand(cmd)
 		s.HandleReplicaStatus(repStatus)
 	case "REPLCONF":
-		_, kvPair := s.Handler.HandleReplicaConfigCommand(cmd)
-		s.ParseReplicaConfig(kvPair, conn)
-	default:
-		response = s.Handler.Encoder.GenerateSimpleError(fmt.Sprintf("ERR unknown command '%s'", cmd.Name))
-	}
+		kvPair := s.Parser.ParseReplConfig(cmd)
+		s.HandleReplicaConfig(kvPair, conn)
 
 	//commands that do change local data
-	switch cmd.Name {
 	case "SET":
 		response = s.Handler.HandleSetCommand(cmd)
 	case "LPUSH":
@@ -272,6 +269,9 @@ func (s *Server) HandleParsedCommands(cmd Command, isAtomic bool, conn net.Conn)
 		response = s.Handler.Encoder.GenerateSimpleError("ERR client is currently not in transaction mode, enter transaction mode with MULTI command")
 	case "DISCARD":
 		response = s.Handler.Encoder.GenerateSimpleError("ERR client is currently not in transaction mode, enter transaction mode with MULTI command")
+	default:
+		response = s.Handler.Encoder.GenerateSimpleError(fmt.Sprintf("ERR unknown command '%s'", cmd.Name))
+
 	}
 
 	s.IncrementReplicaOffset(cmd)
@@ -287,16 +287,16 @@ func (s *Server) IncrementReplicaOffset(cmd Command) {
 	}
 }
 
-func (s *Server) ParseReplicaConfig(kvPair []string, conn net.Conn) {
+func (s *Server) HandleReplicaConfig(kvPair []string, conn net.Conn) {
 	switch kvPair[0] {
 	case "listening-port":
 		s.replPortMap[kvPair[1]] = conn
 		slog.Info("registered a new replica port", "port", kvPair[1])
 
-		conn.Write(s.Handler.Encoder.GetSimpleStringOk())
+		conn.Write(s.Handler.Encoder.GetSimpleStringOk()) //reply to the replica's REPLCONF msg
 
-		//now need to wait for PSYNC exchange
-		bytes := s.WaitForBytes(conn)
+		//now wait for PSYNC exchange
+		bytes := s.WaitForBytes(conn, 10) //wait 10 seconds to recieve PSYNC req
 		if bytes == nil {
 			return
 		}
@@ -307,21 +307,49 @@ func (s *Server) ParseReplicaConfig(kvPair []string, conn net.Conn) {
 			return
 		}
 
-		response, needsFullResync := s.Handler.HandlePsyncCommand(psyncReq, s.ReplicationID, s.ReplicationOffset)
-		conn.Write(response)
+		psyncResp, needsFullSync := s.Handler.HandlePsyncCommand(psyncReq, s.ReplicationID, s.ReplicationOffset)
+		conn.Write(psyncResp)
 
-		if needsFullResync {
+		if needsFullSync {
 			// start background process to send RDB file to replica
+			if len(s.inProgReplSet) == 0 {
+				//there are currently no replications waiting for a RDB snapshot -> create a new background process to generate an RDB snapshot
+
+				s.inProgReplSet[conn] = true //add current replica conn to set
+				returnChan := make(chan ([]byte))
+				go s.CreateRDB(returnChan)
+
+				rdb := <-returnChan //blocking in the local thread and waits for RDB to be created
+
+				s.SendRDB(rdb)
+			}
 		} else {
 			// stream the commands that the replica is missing and return
 		}
 	}
 }
 
-func (s *Server) WaitForBytes(conn net.Conn) []byte {
+func (s *Server) CreateRDB(returnChan chan ([]byte)) {
+	var rdb []byte
+	rdb = append(rdb, []byte("REDIS")...)
+	rdb = append(rdb, []byte("0001")...)
+	rdb = append(rdb, 0xFF)
+
+	time.Sleep(5 * time.Second) // placeholder, this mimics the time it might take to generate a new RDB snapshot for the local data
+
+	returnChan <- rdb
+}
+
+func (s *Server) SendRDB(rdb []byte) {
+	for conn := range s.inProgReplSet {
+		conn.Write(rdb)
+	}
+}
+
+func (s *Server) WaitForBytes(conn net.Conn, n uint64) []byte {
 	buf := make([]byte, 4096)
 
-	ctx, cancel := context.WithTimeout(context.TODO(), time.Duration(10)*time.Second) //give the replica server 10 seconds to respond to PING
+	ctx, cancel := context.WithTimeout(context.TODO(), time.Duration(n)*time.Second) //give the destination server 10 seconds to respond
 	defer cancel()
 
 	respChan := make(chan ([]byte))

@@ -32,6 +32,14 @@ func (s *Server) HandleReplicaStatus(repStatus ReplicaRequest) {
 			slog.Info("Awaiting partial resync with master server...")
 		} else {
 			slog.Info("Awaiting full sync with master server", "masterReplID", psyncResp.masterID, "masterReplOffset", psyncResp.masterOffset)
+			rdb := s.WaitForBytes(s.MasterConn, 30)
+			if rdb == nil {
+				slog.Error("recieving RDB snapshot from master server")
+				return
+			}
+
+			fmt.Println(rdb)
+
 		}
 	}
 }
@@ -45,7 +53,6 @@ func (s *Server) EstablishMasterHandshake() (PsyncResponse, error) {
 		return psyncResp, err
 	}
 
-	//Send REPLCONF signal to register replica listening port with master server
 	err = s.SendReplConf()
 	if err != nil {
 		return psyncResp, err
@@ -69,7 +76,7 @@ func (s *Server) ExchangePsync() (PsyncResponse, error) {
 		return psyncResp, err
 	}
 
-	bytes = s.WaitForBytes(s.MasterConn)
+	bytes = s.WaitForBytes(s.MasterConn, 10)
 	if bytes == nil {
 		return psyncResp, errors.New("did not recieve response to PSYNC from master")
 	}
@@ -86,37 +93,6 @@ func (s *Server) ExchangePsync() (PsyncResponse, error) {
 	return psyncResp, nil
 }
 
-// // function executed by replica
-// func (s *Server) WaitForPsyncResp() (PsyncResponse, error) {
-// 	buf := make([]byte, 4096)
-// 	var psyncResp PsyncResponse
-
-// 	ctx, cancel := context.WithTimeout(context.TODO(), time.Duration(10)*time.Second) //give the master server 10 seconds to respond to PSYNC
-// 	defer cancel()
-
-// 	respChan := make(chan ([]byte))
-
-// 	go func() {
-// 		n, err := s.MasterConn.Read(buf)
-// 		if err != nil {
-// 			slog.Error("reading from master server connection", "err", err)
-// 			respChan <- nil
-// 		} else {
-// 			got := buf[:n]
-// 			respChan <- got
-// 		}
-// 	}()
-
-// 	select {
-// 	case got := <-respChan:
-
-// 	case <-ctx.Done():
-// 		return psyncResp, errors.New("TIMEOUT replica server did not recieve PSYNC response in time")
-// 	}
-
-// 	return psyncResp, nil
-// }
-
 // function executed by replica
 func (s *Server) SendReplConf() error {
 	bytes := s.Handler.Encoder.GenerateReplicaConfig(s.LocalPort)
@@ -125,7 +101,7 @@ func (s *Server) SendReplConf() error {
 		return err
 	}
 
-	bytes = s.WaitForBytes(s.MasterConn)
+	bytes = s.WaitForBytes(s.MasterConn, 10)
 	if bytes == nil {
 		return errors.New("did not recieve ok response from master after sending REPLCONF")
 	}
@@ -146,7 +122,7 @@ func (s *Server) PingMaster() error {
 		return err
 	}
 
-	bytes = s.WaitForBytes(s.MasterConn)
+	bytes = s.WaitForBytes(s.MasterConn, 10)
 	if bytes == nil {
 		return errors.New("failed handshake with master server: PING was not recieved")
 	}
