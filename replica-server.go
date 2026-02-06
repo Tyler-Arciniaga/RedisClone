@@ -39,10 +39,80 @@ func (s *Server) HandleReplicaStatus(repStatus ReplicaRequest) {
 				return
 			}
 
-			fmt.Println(rdb)
+			s.LoadRDB(rdb)
 
+			bytes := s.Handler.Encoder.GetSimpleStringOk()
+			conn.Write(bytes)
+
+			var commandBytes []byte
+			commandBytes = s.WaitForBytes(s.MasterConn, 2)
+			if commandBytes == nil {
+				commandBytes = []byte{}
+			}
+
+			s.ApplyBufferedCommandBytes(commandBytes)
+			conn.Write(s.Handler.Encoder.GetSimpleStringOk())
+
+			slog.Info("Connection with master server established!")
+
+			go s.HandleMasterServerStream(conn)
 		}
 	}
+}
+
+func (s *Server) HandleMasterServerStream(conn net.Conn) {
+	buf := make([]byte, 4096)
+	temp := make([]byte, 4096)
+
+	for {
+		n, err := conn.Read(temp)
+		if err != nil {
+			slog.Error("error reading an incoming command stream from master server")
+			return
+		}
+
+		buf = append(buf, temp[:n]...)
+		cmd, consumed, ok := s.Parser.TryParsingCommand(buf)
+		if !ok {
+			continue
+		}
+
+		if s.IsWriteCommand(cmd.Name) {
+			//increment replica offset
+			offsetChange := uint64(consumed)
+			s.ReplicationOffset += offsetChange
+		}
+
+		buf = buf[consumed:]
+
+		isAtomic := false
+		fmt.Println(cmd)
+		resp := s.HandleParsedCommands(cmd, isAtomic, conn)
+
+		conn.Write(resp)
+	}
+}
+
+func (s *Server) ApplyBufferedCommandBytes(commandBytes []byte) {
+	for len(commandBytes) > 0 {
+		cmd, consumed, ok := s.Parser.TryParsingCommand(commandBytes)
+		if !ok {
+			continue
+		}
+
+		commandBytes = commandBytes[consumed:]
+
+		isAtomic := false
+		var garbage net.Conn
+		s.HandleParsedCommands(cmd, isAtomic, garbage)
+	}
+
+	slog.Info("Finished applying all buffered commands from master server")
+}
+
+func (s *Server) LoadRDB(rdb []byte) {
+	//TODO parse RDB and load it into memory
+	slog.Info("Finished loading RDB snapshot into memory")
 }
 
 // function executed by replica

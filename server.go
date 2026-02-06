@@ -23,8 +23,11 @@ type Server struct {
 	MasterPort        string //may be uninitialized if role is master
 	MasterConn        net.Conn
 
+	CommandBuffer []byte
+
 	clientConnSet map[net.Conn]bool
 	replPortMap   map[string]net.Conn
+	replicaSet    map[net.Conn]bool
 	inProgReplMap map[net.Conn]chan ([]byte)
 	joinChan      chan (net.Conn)
 	leaveChan     chan (net.Conn)
@@ -108,8 +111,16 @@ func (s *Server) RegisterNewConnections() {
 
 func (s *Server) DisconnectConnections() {
 	for c := range s.leaveChan {
-		delete(s.clientConnSet, c)
 		c.Close()
+		if ok := s.clientConnSet[c]; ok {
+			delete(s.clientConnSet, c)
+			slog.Info("A client has disconnected")
+		}
+
+		if ok := s.replicaSet[c]; ok {
+			delete(s.replicaSet, c)
+			slog.Info("A replica has disconnected")
+		}
 	}
 }
 
@@ -120,7 +131,6 @@ func (s *Server) HandleClientStream(conn net.Conn) {
 	for {
 		n, err := conn.Read(temp)
 		if err != nil {
-			slog.Info("A client has disconnected")
 			s.leaveChan <- conn
 			return
 		}
@@ -131,7 +141,21 @@ func (s *Server) HandleClientStream(conn net.Conn) {
 			continue
 		}
 
-		cmd.NumBytes = int64(consumed)
+		if s.IsWriteCommand(cmd.Name) {
+			//increment replica offset
+			offsetChange := uint64(consumed)
+			s.ReplicationOffset += offsetChange
+
+			//if there are any replicas waiting for an RDB snapshot add command to buffer
+			if len(s.inProgReplMap) > 0 {
+				s.CommandBuffer = append(s.CommandBuffer, buf...)
+			}
+
+			//TODO add command to fixed size buffer for PSYNC
+
+			go s.StreamCommandToReplicas(buf)
+		}
+
 		buf = buf[consumed:]
 
 		isAtomic := false
@@ -217,7 +241,8 @@ func (s *Server) BundleServerInfo() map[string]any {
 }
 
 func (s *Server) HandleParsedCommands(cmd Command, isAtomic bool, conn net.Conn) []byte {
-	if !isAtomic {
+	//the process of syncing with master server (partial or full sync) cannot hold rlock as then it can't execute initial buffered commands from master
+	if !isAtomic && cmd.Name != "REPLICAOF" {
 		s.HandlerLock.RLock()
 		defer s.HandlerLock.RUnlock()
 	}
@@ -275,16 +300,22 @@ func (s *Server) HandleParsedCommands(cmd Command, isAtomic bool, conn net.Conn)
 
 	}
 
-	s.IncrementReplicaOffset(cmd)
-
 	return response
 }
 
-func (s *Server) IncrementReplicaOffset(cmd Command) {
+func (s *Server) IsWriteCommand(cmdName string) bool {
 	writeCommands := []string{"SET", "LPUSH", "RPUSH", "LPOP", "BRPOP", "INCR", "MULTI", "EXEC", "DISCARD"}
 
-	if slices.Contains(writeCommands, cmd.Name) {
-		s.ReplicationOffset += uint64(cmd.NumBytes)
+	if slices.Contains(writeCommands, cmdName) {
+		return true
+	}
+
+	return false
+}
+
+func (s *Server) StreamCommandToReplicas(commandBytes []byte) {
+	for conn := range s.replicaSet {
+		conn.Write(commandBytes)
 	}
 }
 
@@ -332,10 +363,36 @@ func (s *Server) HandleReplicaConfig(kvPair []string, conn net.Conn) {
 			}
 
 			conn.Write(rdb)
+
+			bytes := s.WaitForBytes(conn, 5) //wait 5 seconds to recieve ok signal from replica server
+			if bytes == nil {
+				slog.Error("did not recieve ok response from replica after sending RDB snapshot")
+				return
+			}
+
+			s.SendCommandBufferToReplicas()
+
+			bytes = s.WaitForBytes(conn, 10)
+			if bytes == nil {
+				return
+			}
+
+			//at this point the connection is a fully established replica, thus we can begin streaming all our write commands to it
+			s.clientConnSet[conn] = true //TODO make thread safe
 		} else {
 			// stream the commands that the replica is missing and return
 		}
 	}
+}
+
+func (s *Server) SendCommandBufferToReplicas() {
+	for conn := range s.inProgReplMap {
+		go func(commandBuffer []byte) {
+			conn.Write(commandBuffer)
+		}(s.CommandBuffer)
+	}
+
+	s.CommandBuffer = []byte{} //reset command buffer
 }
 
 func (s *Server) CreateRDB() []byte {
