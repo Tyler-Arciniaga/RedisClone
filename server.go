@@ -143,8 +143,7 @@ func (s *Server) HandleClientStream(conn net.Conn) {
 
 		if s.IsWriteCommand(cmd.Name) {
 			//increment replica offset
-			offsetChange := uint64(consumed)
-			s.ReplicationOffset += offsetChange
+			s.ReplicationOffset += uint64(consumed)
 
 			//if there are any replicas waiting for an RDB snapshot add command to buffer
 			if len(s.inProgReplMap) > 0 {

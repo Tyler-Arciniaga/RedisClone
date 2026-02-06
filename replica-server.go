@@ -31,43 +31,49 @@ func (s *Server) HandleReplicaStatus(repStatus ReplicaRequest) {
 		if psyncResp.isPartialResync {
 			slog.Info("Awaiting partial resync with master server...")
 		} else {
-			slog.Info("Awaiting full sync with master server", "masterReplID", psyncResp.masterID, "masterReplOffset", psyncResp.masterOffset)
-
-			rdb := s.WaitForBytes(s.MasterConn, 30)
-			if rdb == nil {
-				slog.Error("recieving RDB snapshot from master server")
-				return
-			}
-
-			s.LoadRDB(rdb)
-
-			bytes := s.Handler.Encoder.GetSimpleStringOk()
-			conn.Write(bytes)
-
-			var commandBytes []byte
-			commandBytes = s.WaitForBytes(s.MasterConn, 2)
-			if commandBytes == nil {
-				commandBytes = []byte{}
-			}
-
-			s.ApplyBufferedCommandBytes(commandBytes)
-			conn.Write(s.Handler.Encoder.GetSimpleStringOk())
-
-			slog.Info("Connection with master server established!", "conn", conn)
-
-			go s.HandleMasterServerStream(conn)
+			s.FullSyncWithMaster(psyncResp, conn)
 		}
 	}
 }
 
+func (s *Server) FullSyncWithMaster(psyncResp PsyncResponse, conn net.Conn) {
+	s.ReplicationID = psyncResp.masterID
+	s.ReplicationOffset = psyncResp.masterOffset
+	s.Role = "replica"
+
+	slog.Info("Awaiting full sync with master server", "masterReplID", psyncResp.masterID, "masterReplOffset", psyncResp.masterOffset)
+
+	rdb := s.WaitForBytes(s.MasterConn, 30) // wait at most 30 seconds to recieve RDB from master server
+	if rdb == nil {
+		slog.Error("recieving RDB snapshot from master server")
+		return
+	}
+
+	s.LoadRDB(rdb)
+	conn.Write(s.Handler.Encoder.GetSimpleStringOk())
+
+	var commandBytes []byte
+	commandBytes = s.WaitForBytes(s.MasterConn, 2) //wait 2 seconds to recieve buffered command bytes, if any
+	if commandBytes == nil {
+		commandBytes = []byte{}
+	}
+
+	s.ApplyBufferedCommandBytes(commandBytes)
+	conn.Write(s.Handler.Encoder.GetSimpleStringOk())
+
+	slog.Info("Connection with master server established!", "conn", conn)
+	go s.HandleMasterServerStream(conn) //spin of a new go routine to handle all streamed write commands from master server
+}
+
 func (s *Server) HandleMasterServerStream(conn net.Conn) {
-	buf := make([]byte, 4096)
+	buf := []byte{} // set buf intially to empty string rather than of size 4096 to fix bug with initial offset handling
 	temp := make([]byte, 4096)
 
 	for {
 		n, err := conn.Read(temp)
 		if err != nil {
-			slog.Error("error reading an incoming command stream from master server")
+			slog.Error("error reading an incoming command stream from master server, transition into master server...")
+			s.Role = "master"
 			return
 		}
 
@@ -93,6 +99,8 @@ func (s *Server) ApplyBufferedCommandBytes(commandBytes []byte) {
 			continue
 		}
 
+		s.ReplicationOffset += uint64(consumed)
+
 		commandBytes = commandBytes[consumed:]
 
 		isAtomic := false
@@ -105,6 +113,8 @@ func (s *Server) ApplyBufferedCommandBytes(commandBytes []byte) {
 
 func (s *Server) LoadRDB(rdb []byte) {
 	//TODO parse RDB and load it into memory
+	//save to Disk
+	//read from Disk
 	slog.Info("Finished loading RDB snapshot into memory")
 }
 
