@@ -53,7 +53,7 @@ func (s *Server) HandleReplicaStatus(repStatus ReplicaRequest) {
 			s.ApplyBufferedCommandBytes(commandBytes)
 			conn.Write(s.Handler.Encoder.GetSimpleStringOk())
 
-			slog.Info("Connection with master server established!")
+			slog.Info("Connection with master server established!", "conn", conn)
 
 			go s.HandleMasterServerStream(conn)
 		}
@@ -77,19 +77,12 @@ func (s *Server) HandleMasterServerStream(conn net.Conn) {
 			continue
 		}
 
-		if s.IsWriteCommand(cmd.Name) {
-			//increment replica offset
-			offsetChange := uint64(consumed)
-			s.ReplicationOffset += offsetChange
-		}
+		s.ReplicationOffset += uint64(consumed) //guranteed to be a write command therefore always increment replica offset
 
 		buf = buf[consumed:]
 
 		isAtomic := false
-		fmt.Println(cmd)
-		resp := s.HandleParsedCommands(cmd, isAtomic, conn)
-
-		conn.Write(resp)
+		s.HandleParsedCommands(cmd, isAtomic, conn)
 	}
 }
 

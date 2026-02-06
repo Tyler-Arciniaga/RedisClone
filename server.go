@@ -45,7 +45,7 @@ func (s *Server) HandleCommandArgs() {
 				s.LocalPort = os.Args[i+1]
 			}
 		case "--help":
-			fmt.Print("This is a redis clone made entirely in Go!\n\nCommand Flags:\n--port [port number] : to configure the listening port\n--help : You're already here!\n")
+			fmt.Print("This is a multi-threaded Redis clone made entirely in Go!\n\nCommand Flags:\n--port [port number] : to configure the listening port\n--help : You're already here!\n")
 			os.Exit(0)
 		}
 		//TODO handle more command line args eventually
@@ -349,7 +349,6 @@ func (s *Server) HandleReplicaConfig(kvPair []string, conn net.Conn) {
 
 			if len(s.inProgReplMap) == 0 {
 				//there are currently no replications waiting for a RDB snapshot -> create a new background process to generate an RDB snapshot
-
 				s.inProgReplMap[conn] = replChan //add current replica conn to set
 				rdb = s.CreateRDB()
 				go s.SendRDB(rdb)
@@ -370,15 +369,25 @@ func (s *Server) HandleReplicaConfig(kvPair []string, conn net.Conn) {
 				return
 			}
 
-			s.SendCommandBufferToReplicas()
+			slog.Info("Recieved OK response from replicas after sending RDB snapshot!")
 
-			bytes = s.WaitForBytes(conn, 10)
-			if bytes == nil {
-				return
+			if len(s.CommandBuffer) > 0 {
+				slog.Info("Sending buffered commands to new replicas...")
+				s.SendCommandBufferToReplicas()
+
+				bytes = s.WaitForBytes(conn, 10)
+				if bytes == nil {
+					return
+				}
+
+				slog.Info("Recieved OK response from replicas after sending buffered commands")
 			}
 
 			//at this point the connection is a fully established replica, thus we can begin streaming all our write commands to it
-			s.clientConnSet[conn] = true //TODO make thread safe
+			//TODO: make the following thread safe
+			delete(s.clientConnSet, conn)
+			s.replicaSet[conn] = true
+			slog.Info("New replica registered", "conn", conn)
 		} else {
 			// stream the commands that the replica is missing and return
 		}
@@ -401,7 +410,7 @@ func (s *Server) CreateRDB() []byte {
 	rdb = append(rdb, []byte("0001")...)
 	rdb = append(rdb, 0xFF)
 
-	time.Sleep(5 * time.Second) // placeholder, this mimics the time it might take to generate a new RDB snapshot for the local data
+	time.Sleep(2 * time.Second) // placeholder, this mimics the time it might take to generate a new RDB snapshot for the local data
 
 	return rdb
 }
@@ -437,7 +446,6 @@ func (s *Server) WaitForBytes(conn net.Conn, n uint64) []byte {
 			return nil
 		} //error recieving bytes from master connection
 
-		slog.Info("recieved expected bytes!")
 		return got
 
 	case <-ctx.Done():
