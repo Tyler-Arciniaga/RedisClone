@@ -25,7 +25,7 @@ type Server struct {
 
 	clientConnSet map[net.Conn]bool
 	replPortMap   map[string]net.Conn
-	inProgReplSet map[net.Conn]bool
+	inProgReplMap map[net.Conn]chan ([]byte)
 	joinChan      chan (net.Conn)
 	leaveChan     chan (net.Conn)
 	HandlerLock   sync.RWMutex
@@ -109,6 +109,7 @@ func (s *Server) RegisterNewConnections() {
 func (s *Server) DisconnectConnections() {
 	for c := range s.leaveChan {
 		delete(s.clientConnSet, c)
+		c.Close()
 	}
 }
 
@@ -311,25 +312,33 @@ func (s *Server) HandleReplicaConfig(kvPair []string, conn net.Conn) {
 		conn.Write(psyncResp)
 
 		if needsFullSync {
-			// start background process to send RDB file to replica
-			if len(s.inProgReplSet) == 0 {
+			// create send RDB file to replica
+			replChan := make(chan ([]byte))
+			var rdb []byte
+
+			if len(s.inProgReplMap) == 0 {
 				//there are currently no replications waiting for a RDB snapshot -> create a new background process to generate an RDB snapshot
 
-				s.inProgReplSet[conn] = true //add current replica conn to set
-				returnChan := make(chan ([]byte))
-				go s.CreateRDB(returnChan)
+				s.inProgReplMap[conn] = replChan //add current replica conn to set
+				rdb = s.CreateRDB()
+				go s.SendRDB(rdb)
 
-				rdb := <-returnChan //blocking in the local thread and waits for RDB to be created
+				rdb = <-replChan
+			} else {
+				// there is at least one other replica waiting for an already in progress RDB snapshot
+				s.inProgReplMap[conn] = replChan //add current replica conn to set
 
-				s.SendRDB(rdb)
+				rdb = <-replChan
 			}
+
+			conn.Write(rdb)
 		} else {
 			// stream the commands that the replica is missing and return
 		}
 	}
 }
 
-func (s *Server) CreateRDB(returnChan chan ([]byte)) {
+func (s *Server) CreateRDB() []byte {
 	var rdb []byte
 	rdb = append(rdb, []byte("REDIS")...)
 	rdb = append(rdb, []byte("0001")...)
@@ -337,12 +346,12 @@ func (s *Server) CreateRDB(returnChan chan ([]byte)) {
 
 	time.Sleep(5 * time.Second) // placeholder, this mimics the time it might take to generate a new RDB snapshot for the local data
 
-	returnChan <- rdb
+	return rdb
 }
 
 func (s *Server) SendRDB(rdb []byte) {
-	for conn := range s.inProgReplSet {
-		conn.Write(rdb)
+	for _, replChan := range s.inProgReplMap {
+		replChan <- rdb
 	}
 }
 

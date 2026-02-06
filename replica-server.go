@@ -32,6 +32,7 @@ func (s *Server) HandleReplicaStatus(repStatus ReplicaRequest) {
 			slog.Info("Awaiting partial resync with master server...")
 		} else {
 			slog.Info("Awaiting full sync with master server", "masterReplID", psyncResp.masterID, "masterReplOffset", psyncResp.masterOffset)
+
 			rdb := s.WaitForBytes(s.MasterConn, 30)
 			if rdb == nil {
 				slog.Error("recieving RDB snapshot from master server")
