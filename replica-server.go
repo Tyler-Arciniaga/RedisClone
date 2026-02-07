@@ -28,19 +28,40 @@ func (s *Server) HandleReplicaStatus(repStatus ReplicaRequest) {
 			return
 		}
 
+		conn.Write(s.Handler.Encoder.GetSimpleStringOk()) //send ok signal to master server to signify that we recieved a PSYNC response (and synchronize the two servers)
+
+		//TODO check to see if master server has enough saved previous commands to partial resync with replica...
+
+		//update replica's replicationID and offset to match the master server
+		s.ReplicationID = psyncResp.masterID
+		s.ReplicationOffset = psyncResp.masterOffset
+		s.Role = "replica"
+
 		if psyncResp.isPartialResync {
-			slog.Info("Awaiting partial resync with master server...")
+			s.PartialResyncWithMaster(psyncResp, conn)
 		} else {
 			s.FullSyncWithMaster(psyncResp, conn)
 		}
+
+		slog.Info("Connection with master server established!", "conn", conn)
+		go s.HandleMasterServerStream(conn) //spin off a new go routine to handle all streamed write commands from master server
 	}
 }
 
-func (s *Server) FullSyncWithMaster(psyncResp PsyncResponse, conn net.Conn) {
-	s.ReplicationID = psyncResp.masterID
-	s.ReplicationOffset = psyncResp.masterOffset
-	s.Role = "replica"
+func (s *Server) PartialResyncWithMaster(psyncResp PsyncResponse, conn net.Conn) {
+	slog.Info("Awaiting partial resync with master server...")
 
+	commandBytes := s.WaitForBytes(conn, 10) //wait 30 seconds to recieve bytes need to bring replica up to date with master server's data
+	if commandBytes == nil {
+		commandBytes = []byte{}
+	}
+
+	s.ApplyCommandBytes(commandBytes)
+
+	conn.Write(s.Handler.Encoder.GetSimpleStringOk())
+}
+
+func (s *Server) FullSyncWithMaster(psyncResp PsyncResponse, conn net.Conn) {
 	slog.Info("Awaiting full sync with master server", "masterReplID", psyncResp.masterID, "masterReplOffset", psyncResp.masterOffset)
 
 	rdb := s.WaitForBytes(s.MasterConn, 30) // wait at most 30 seconds to recieve RDB from master server
@@ -58,11 +79,8 @@ func (s *Server) FullSyncWithMaster(psyncResp PsyncResponse, conn net.Conn) {
 		commandBytes = []byte{}
 	}
 
-	s.ApplyBufferedCommandBytes(commandBytes)
+	s.ApplyCommandBytes(commandBytes)
 	conn.Write(s.Handler.Encoder.GetSimpleStringOk())
-
-	slog.Info("Connection with master server established!", "conn", conn)
-	go s.HandleMasterServerStream(conn) //spin of a new go routine to handle all streamed write commands from master server
 }
 
 func (s *Server) HandleMasterServerStream(conn net.Conn) {
@@ -92,11 +110,12 @@ func (s *Server) HandleMasterServerStream(conn net.Conn) {
 	}
 }
 
-func (s *Server) ApplyBufferedCommandBytes(commandBytes []byte) {
+func (s *Server) ApplyCommandBytes(commandBytes []byte) {
 	for len(commandBytes) > 0 {
 		cmd, consumed, ok := s.Parser.TryParsingCommand(commandBytes)
 		if !ok {
-			continue
+			slog.Error("Error parsing some of the command bytes that were streamed from master server")
+			break
 		}
 
 		s.ReplicationOffset += uint64(consumed)

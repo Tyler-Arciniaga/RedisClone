@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -23,7 +24,12 @@ type Server struct {
 	MasterPort        string //may be uninitialized if role is master
 	MasterConn        net.Conn
 
-	CommandBuffer []byte
+	commandBuffer        []byte //stores commands while RDB snapshot is being created
+	replBacklogCap       uint64
+	replBacklogSize      uint64
+	replBacklog          []byte
+	replBacklogWriteHead uint64
+	replBacklogStart     uint64
 
 	clientConnSet map[net.Conn]bool
 	replPortMap   map[string]net.Conn
@@ -60,7 +66,8 @@ func (s *Server) GenerateReplicationID() string {
 		sb.WriteByte(charset[rand.Intn(len(charset))])
 	}
 
-	return sb.String()
+	// return sb.String()
+	return "abcd"
 }
 
 func (s *Server) ConfigureMasterStatus() {
@@ -147,10 +154,19 @@ func (s *Server) HandleClientStream(conn net.Conn) {
 
 			//if there are any replicas waiting for an RDB snapshot add command to buffer
 			if len(s.inProgReplMap) > 0 {
-				s.CommandBuffer = append(s.CommandBuffer, buf...)
+				s.commandBuffer = append(s.commandBuffer, buf[:consumed]...)
 			}
 
 			//TODO add command to fixed size buffer for PSYNC
+			for _, v := range buf[:consumed] {
+				index := (s.replBacklogWriteHead + s.replBacklogSize) % s.replBacklogCap
+				s.replBacklog[index] = v
+				if index == s.replBacklogWriteHead {
+					s.replBacklogWriteHead = (s.replBacklogWriteHead + 1) % s.replBacklogCap
+					s.replBacklogStart++
+				}
+				s.replBacklogSize++
+			} //TODO make replica backlog struct with member functions for adding and replacing
 
 			go s.StreamCommandToReplicas(buf)
 		}
@@ -188,6 +204,8 @@ func (s *Server) HandleClientTransaction(conn net.Conn) {
 			continue
 		}
 		buf = buf[consumed:]
+
+		//TODO increment replication offset for transactions as well
 
 		switch cmd.Name {
 		case "EXEC":
@@ -370,7 +388,7 @@ func (s *Server) HandleReplicaConfig(kvPair []string, conn net.Conn) {
 
 			slog.Info("Recieved OK response from replicas after sending RDB snapshot!")
 
-			if len(s.CommandBuffer) > 0 {
+			if len(s.commandBuffer) > 0 {
 				slog.Info("Sending buffered commands to new replicas...")
 				s.SendCommandBufferToReplicas()
 
@@ -381,15 +399,47 @@ func (s *Server) HandleReplicaConfig(kvPair []string, conn net.Conn) {
 
 				slog.Info("Recieved OK response from replicas after sending buffered commands")
 			}
-
-			//at this point the connection is a fully established replica, thus we can begin streaming all our write commands to it
-			//TODO: make the following thread safe
-			delete(s.clientConnSet, conn)
-			s.replicaSet[conn] = true
-			slog.Info("New replica registered", "conn", conn)
 		} else {
+			okSignal := s.WaitForBytes(conn, 10) //wait 10 seconds to recieve ok signal from replica about PSYNC response
+			if okSignal == nil {
+				slog.Error("did not recieve OK signal from replica server regarding PSYNC response")
+				return
+			}
+
 			// stream the commands that the replica is missing and return
+			replicaOffset, _ := strconv.Atoi(string(psyncReq.Args[1]))
+			if s.replBacklogStart < uint64(replicaOffset) {
+				//TODO return error and force replica into full sync (the replication backlog does not have all the bytes needed to get replica up to speed)
+
+			} else {
+				//TODO check the logic below
+				var ptr uint64
+				for range uint64(replicaOffset) - s.replBacklogStart + 1 {
+					ptr++
+				} //move ptr to start of bytes replica should read from backlog
+
+				var buf []byte
+				for range s.ReplicationOffset - uint64(replicaOffset) + 1 {
+					buf = append(buf, s.replBacklog[ptr])
+					ptr++
+				}
+
+				conn.Write(buf)
+
+				okSignal := s.WaitForBytes(conn, 10) //recieve ok signal after replica confirms partial resync
+				if okSignal == nil {
+					slog.Error("did not recieve OK signal from replica server regarding partial resync")
+					return
+				}
+				slog.Info("Finished partial resync with replica", "conn", conn)
+			}
 		}
+
+		//at this point the connection is a fully established replica, thus we can begin streaming all our write commands to it
+		//TODO: make the following thread safe
+		delete(s.clientConnSet, conn)
+		s.replicaSet[conn] = true
+		slog.Info("New replica registered", "conn", conn)
 	}
 }
 
@@ -397,10 +447,10 @@ func (s *Server) SendCommandBufferToReplicas() {
 	for conn := range s.inProgReplMap {
 		go func(commandBuffer []byte) {
 			conn.Write(commandBuffer)
-		}(s.CommandBuffer)
+		}(s.commandBuffer)
 	}
 
-	s.CommandBuffer = []byte{} //reset command buffer
+	s.commandBuffer = []byte{} //reset command buffer
 }
 
 func (s *Server) CreateRDB() []byte {
@@ -443,7 +493,7 @@ func (s *Server) WaitForBytes(conn net.Conn, n uint64) []byte {
 	case got := <-respChan:
 		if got == nil {
 			return nil
-		} //error recieving bytes from master connection
+		} //error recieving bytes from destination connection
 
 		return got
 
