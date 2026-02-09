@@ -27,10 +27,10 @@ type Server struct {
 	commandBuffer  []byte //stores commands while RDB snapshot is being created
 	commandBacklog CommandBacklog
 
-	clientConnSet map[net.Conn]bool
-	replPortMap   map[string]net.Conn
-	replicaSet    map[net.Conn]bool
-	inProgReplMap map[net.Conn]chan ([]byte)
+	clientConnSet *SafeMap[net.Conn, bool]
+	replPortMap   *SafeMap[string, net.Conn]
+	replicaSet    *SafeMap[net.Conn, bool]
+	inProgReplMap *SafeMap[net.Conn, chan ([]byte)]
 	joinChan      chan (net.Conn)
 	leaveChan     chan (net.Conn)
 	HandlerLock   sync.RWMutex
@@ -107,20 +107,18 @@ func (s *Server) StartServer() {
 
 func (s *Server) RegisterNewConnections() {
 	for c := range s.joinChan {
-		s.clientConnSet[c] = true
+		s.clientConnSet.InsertKV(c, true)
 	}
 }
 
 func (s *Server) DisconnectConnections() {
 	for c := range s.leaveChan {
 		c.Close()
-		if ok := s.clientConnSet[c]; ok {
-			delete(s.clientConnSet, c)
-			slog.Info("A client has disconnected")
-		}
 
-		if ok := s.replicaSet[c]; ok {
-			delete(s.replicaSet, c)
+		if ok := s.clientConnSet.DeleteKey(c); ok {
+			slog.Info("A client has disconnected")
+		} else {
+			s.replicaSet.DeleteKey(c)
 			slog.Info("A replica has disconnected")
 		}
 	}
@@ -148,7 +146,7 @@ func (s *Server) HandleClientStream(conn net.Conn) {
 			s.ReplicationOffset += uint64(consumed)
 
 			//if there are any replicas waiting for an RDB snapshot add command to buffer
-			if len(s.inProgReplMap) > 0 {
+			if s.inProgReplMap.GetLen() > 0 {
 				s.commandBuffer = append(s.commandBuffer, buf[:consumed]...)
 			}
 
@@ -236,7 +234,7 @@ func (s *Server) ExecuteTransaction(conn net.Conn) {
 func (s *Server) BundleServerInfo() map[string]any {
 	infoMap := make(map[string]any)
 	infoMap["tcp_port"] = s.LocalPort
-	infoMap["connected_clients"] = len(s.clientConnSet)
+	infoMap["connected_clients"] = s.clientConnSet.GetLen()
 	infoMap["role"] = s.Role
 	infoMap["master_replid"] = s.ReplicationID
 	infoMap["master_repl_offset"] = s.ReplicationOffset
@@ -317,7 +315,8 @@ func (s *Server) IsWriteCommand(cmdName string) bool {
 }
 
 func (s *Server) StreamCommandToReplicas(commandBytes []byte) {
-	for conn := range s.replicaSet {
+	replicaConns := s.replicaSet.GetKeys()
+	for _, conn := range replicaConns {
 		conn.Write(commandBytes)
 	}
 }
@@ -325,7 +324,7 @@ func (s *Server) StreamCommandToReplicas(commandBytes []byte) {
 func (s *Server) HandleReplicaConfig(kvPair []string, conn net.Conn) {
 	switch kvPair[0] {
 	case "listening-port":
-		s.replPortMap[kvPair[1]] = conn
+		s.replPortMap.InsertKV(kvPair[1], conn)
 		slog.Info("registered a new replica port", "port", kvPair[1])
 
 		conn.Write(s.Handler.Encoder.GetSimpleStringOk()) //reply to the replica's REPLCONF msg
@@ -350,17 +349,15 @@ func (s *Server) HandleReplicaConfig(kvPair []string, conn net.Conn) {
 			replChan := make(chan ([]byte))
 			var rdb []byte
 
-			if len(s.inProgReplMap) == 0 {
-				//there are currently no replications waiting for a RDB snapshot -> create a new background process to generate an RDB snapshot
-				s.inProgReplMap[conn] = replChan //add current replica conn to set
+			if s.inProgReplMap.GetLen() == 0 {
+				//there are currently no replicas waiting for a RDB snapshot -> create a new background process to generate an RDB snapshot
+				s.inProgReplMap.InsertKV(conn, replChan) //add current replica conn to set
 				rdb = s.CreateRDB()
 				go s.SendRDB(rdb)
-
 				rdb = <-replChan
 			} else {
 				// there is at least one other replica waiting for an already in progress RDB snapshot
-				s.inProgReplMap[conn] = replChan //add current replica conn to set
-
+				s.inProgReplMap.InsertKV(conn, replChan) //add current replica conn to set
 				rdb = <-replChan
 			}
 
@@ -414,13 +411,14 @@ func (s *Server) HandleReplicaConfig(kvPair []string, conn net.Conn) {
 
 	//at this point the connection is a fully established replica, thus we can begin streaming all our write commands to it
 	//TODO: make the following thread safe
-	delete(s.clientConnSet, conn)
-	s.replicaSet[conn] = true
+	s.clientConnSet.DeleteKey(conn)
+	s.replicaSet.InsertKV(conn, true)
 	slog.Info("New replica registered", "conn", conn)
 }
 
 func (s *Server) SendCommandBufferToReplicas() {
-	for conn := range s.inProgReplMap {
+	replicaConns := s.inProgReplMap.GetKeys()
+	for _, conn := range replicaConns {
 		go func(commandBuffer []byte) {
 			conn.Write(commandBuffer)
 		}(s.commandBuffer)
@@ -441,7 +439,8 @@ func (s *Server) CreateRDB() []byte {
 }
 
 func (s *Server) SendRDB(rdb []byte) {
-	for _, replChan := range s.inProgReplMap {
+	replyChans := s.inProgReplMap.GetValues()
+	for _, replChan := range replyChans {
 		replChan <- rdb
 	}
 }

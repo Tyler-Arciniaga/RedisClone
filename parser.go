@@ -15,8 +15,8 @@ func (p Parser) ReadLine(buf []byte) ([]byte, int, bool) {
 	var line []byte
 	for i, v := range buf {
 		if v == '\r' && (i+1) < len(buf) && buf[i+1] == '\n' { // delimiter found...
-			line = buf[:i]           //extract chunk of slice up to but not including delimter
-			return line, i + 2, true //TODO may need to return i + 1 not i + 2!!!
+			line = buf[:i] //extract chunk of slice up to but not including delimter
+			return line, i + 2, true
 		}
 	}
 	return nil, 0, false
