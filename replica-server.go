@@ -51,7 +51,7 @@ func (s *Server) HandleReplicaStatus(repStatus ReplicaRequest) {
 func (s *Server) PartialResyncWithMaster(psyncResp PsyncResponse, conn net.Conn) {
 	slog.Info("Awaiting partial resync with master server...")
 
-	commandBytes := s.WaitForBytes(conn, 10) //wait 30 seconds to recieve bytes need to bring replica up to date with master server's data
+	commandBytes := s.WaitForBytes(conn, 10) //wait 10 seconds to recieve bytes need to bring replica up to date with master server's data
 	if commandBytes == nil {
 		commandBytes = []byte{}
 	}
@@ -73,10 +73,14 @@ func (s *Server) FullSyncWithMaster(psyncResp PsyncResponse, conn net.Conn) {
 	s.LoadRDB(rdb)
 	conn.Write(s.Handler.Encoder.GetSimpleStringOk())
 
+	fmt.Println("xjfjsdflkajfdlkajflkajsdfjl")
+
 	var commandBytes []byte
-	commandBytes = s.WaitForBytes(s.MasterConn, 2) //wait 2 seconds to recieve buffered command bytes, if any
+	commandBytes = s.WaitForBytes(s.MasterConn, 10) //wait 5 seconds to recieve buffered command bytes, if any
+	// fmt.Println("recieved bytes", string(commandBytes))
 	if commandBytes == nil {
 		commandBytes = []byte{}
+		slog.Info("No buffered command bytes recieved from master server")
 	}
 
 	s.ApplyCommandBytes(commandBytes)

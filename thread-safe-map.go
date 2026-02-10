@@ -66,5 +66,17 @@ func (s *SafeMap[T, Y]) GetValues() []Y {
 }
 
 func (s *SafeMap[T, Y]) GetLen() int {
+	s.mtx.RLock()
+	defer s.mtx.RUnlock()
+
 	return len(s.data)
+}
+
+func (s *SafeMap[T, Y]) Clear() {
+	s.mtx.Lock()
+	defer s.mtx.Unlock()
+
+	for key := range s.data {
+		delete(s.data, key)
+	}
 }

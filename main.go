@@ -11,9 +11,10 @@ func main() {
 	handler := Handler{Store: &store, ClientCommandQueue: make(map[net.Conn][]Command)}
 
 	commandBacklog := CommandBacklog{capacity: 100, size: 0, writeHead: 0, backlogStart: 0, Backlog: make([]byte, 100)}
+
+	clientConnSet := NewSafeMap[net.Conn, bool]()
 	replicaPortMap := NewSafeMap[string, net.Conn]()
 	replicaSet := NewSafeMap[net.Conn, bool]()
-	clientConnSet := NewSafeMap[net.Conn, bool]()
 	inProgReplicaMap := NewSafeMap[net.Conn, chan ([]byte)]()
 
 	server := Server{

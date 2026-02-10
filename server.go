@@ -147,6 +147,7 @@ func (s *Server) HandleClientStream(conn net.Conn) {
 
 			//if there are any replicas waiting for an RDB snapshot add command to buffer
 			if s.inProgReplMap.GetLen() > 0 {
+				fmt.Println("xyz123", string(buf[:consumed]))
 				s.commandBuffer = append(s.commandBuffer, buf[:consumed]...)
 			}
 
@@ -321,6 +322,26 @@ func (s *Server) StreamCommandToReplicas(commandBytes []byte) {
 	}
 }
 
+func (s *Server) SendRDB2(rdb []byte) {
+	replicaConns := s.inProgReplMap.GetKeys()
+	for _, conn := range replicaConns {
+		go func() {
+			conn.Write(rdb)
+		}() //write rdb in a go func in order to not be blocked by slow replicas
+	}
+}
+
+func (s *Server) SendCommandBufferToReplicas2() {
+	replicaConns := s.inProgReplMap.GetKeys()
+	for _, conn := range replicaConns {
+		go func(commandBuffer []byte) {
+			fmt.Println("sending away!", string(commandBuffer))
+			conn.Write(commandBuffer)
+		}(s.commandBuffer)
+	}
+	s.commandBuffer = []byte{} //clear command buffer
+}
+
 func (s *Server) HandleReplicaConfig(kvPair []string, conn net.Conn) {
 	switch kvPair[0] {
 	case "listening-port":
@@ -345,43 +366,57 @@ func (s *Server) HandleReplicaConfig(kvPair []string, conn net.Conn) {
 		conn.Write(psyncResp)
 
 		if needsFullSync {
-			// create send RDB file to replica
+			// create and send RDB file to replica
 			replChan := make(chan ([]byte))
 			var rdb []byte
+
+			// if s.inProgReplMap.GetLen() == 0 {
+			// 	s.inProgReplMap.InsertKV(conn, replChan)
+			// 	rdb = s.CreateRDB()
+			// 	s.SendRDB2(rdb)
+			// }
 
 			if s.inProgReplMap.GetLen() == 0 {
 				//there are currently no replicas waiting for a RDB snapshot -> create a new background process to generate an RDB snapshot
 				s.inProgReplMap.InsertKV(conn, replChan) //add current replica conn to set
 				rdb = s.CreateRDB()
-				go s.SendRDB(rdb)
-				rdb = <-replChan
+				s.SendRDB2(rdb)
+				s.WaitForBytes(conn, 10)
+				s.SendCommandBufferToReplicas2()
+				s.inProgReplMap.Clear()
+				s.WaitForBytes(conn, 30) //wait 30 seconds to recieve ok signal from replica
+				// rdb = <-replChan
+
 			} else {
 				// there is at least one other replica waiting for an already in progress RDB snapshot
 				s.inProgReplMap.InsertKV(conn, replChan) //add current replica conn to set
-				rdb = <-replChan
+				s.WaitForBytes(conn, 10)                 //ok signal for RDB from replica
+				s.WaitForBytes(conn, 30)                 //wait for 30 seconds to recieve ok signal for that RDB and command buffer was written
+				// rdb = <-replChan
 			}
 
-			conn.Write(rdb)
+			// s.inProgReplMap.DeleteKey(conn) //once you have RDB for replica, remove it from the in progress map
+			// conn.Write(rdb)
 
-			bytes := s.WaitForBytes(conn, 5) //wait 5 seconds to recieve ok signal from replica server
-			if bytes == nil {
-				slog.Error("did not recieve ok response from replica after sending RDB snapshot")
-				return
-			}
+			// bytes := s.WaitForBytes(conn, 10) //wait 5 seconds to recieve ok signal from replica server
+			// if bytes == nil {
+			// 	slog.Error("did not recieve ok response from replica after sending RDB snapshot")
+			// 	return
+			// }
+			// slog.Info("Recieved OK response from replica after sending RDB snapshot!")
 
-			slog.Info("Recieved OK response from replicas after sending RDB snapshot!")
+			// if len(s.commandBuffer) > 0 {
+			// 	slog.Info("Sending buffered commands to new replicas...")
+			// 	s.SendCommandBufferToReplica(conn)
+			// 	// s.SendCommandBufferToReplicas()
 
-			if len(s.commandBuffer) > 0 {
-				slog.Info("Sending buffered commands to new replicas...")
-				s.SendCommandBufferToReplicas()
+			// 	bytes = s.WaitForBytes(conn, 10)
+			// 	if bytes == nil {
+			// 		return
+			// 	}
 
-				bytes = s.WaitForBytes(conn, 10)
-				if bytes == nil {
-					return
-				}
-
-				slog.Info("Recieved OK response from replicas after sending buffered commands")
-			}
+			// 	slog.Info("Recieved OK response from replicas after sending buffered commands")
+			// }
 		} else {
 
 			// PARTIAL RESYNC **************************
@@ -410,10 +445,13 @@ func (s *Server) HandleReplicaConfig(kvPair []string, conn net.Conn) {
 	}
 
 	//at this point the connection is a fully established replica, thus we can begin streaming all our write commands to it
-	//TODO: make the following thread safe
-	s.clientConnSet.DeleteKey(conn)
 	s.replicaSet.InsertKV(conn, true)
+	s.clientConnSet.DeleteKey(conn)
 	slog.Info("New replica registered", "conn", conn)
+}
+
+func (s *Server) SendCommandBufferToReplica(conn net.Conn) {
+	conn.Write(s.commandBuffer)
 }
 
 func (s *Server) SendCommandBufferToReplicas() {
@@ -455,6 +493,7 @@ func (s *Server) WaitForBytes(conn net.Conn, n uint64) []byte {
 
 	go func() {
 		n, err := conn.Read(buf)
+		fmt.Println("xyz", string(buf[:n]))
 		if err != nil {
 			slog.Error("reading from connection", "err", err)
 			respChan <- nil
