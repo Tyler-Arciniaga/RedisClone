@@ -11,41 +11,53 @@ import (
 
 // all logic pertaining to a replica server (i.e. not master)
 
-func (s *Server) HandleReplicaStatus(repStatus ReplicaRequest) {
-	if repStatus.isNowMaster {
+func (s *Server) HandleReplicaStatus(replStatus ReplicaRequest) []byte {
+	if replStatus.isNowMaster {
 		s.ConfigureMasterStatus()
+		slog.Info("Server configured as master")
 	} else {
-		port := fmt.Sprintf("localhost:%s", repStatus.masterPort)
-		conn, err := net.Dial("tcp", port)
-		s.MasterConn = conn
+		err := s.HandleReplication(replStatus)
 		if err != nil {
-			s.MasterConn = nil //reset local server's master conn if TCP connection failed
+			return s.Handler.Encoder.GenerateSimpleError(err.Error())
 		}
-
-		psyncResp, err := s.EstablishMasterHandshake()
-		if err != nil {
-			slog.Error("Handshake with master server failed", "err", err.Error())
-			return
-		}
-
-		conn.Write(s.Handler.Encoder.GetSimpleStringOk()) //send ok signal to master server to signify that we recieved a PSYNC response (and synchronize the two servers)
-
-		//TODO check to see if master server has enough saved previous commands to partial resync with replica...
-
-		//update replica's replicationID and offset to match the master server
-		s.ReplicationID = psyncResp.masterID
-		s.ReplicationOffset = psyncResp.masterOffset
-		s.Role = "replica"
-
-		if psyncResp.isPartialResync {
-			s.PartialResyncWithMaster(psyncResp, conn)
-		} else {
-			s.FullSyncWithMaster(psyncResp, conn)
-		}
-
-		slog.Info("Connection with master server established!", "conn", conn)
-		go s.HandleMasterServerStream(conn) //spin off a new go routine to handle all streamed write commands from master server
 	}
+
+	return s.Handler.Encoder.GetSimpleStringOk()
+}
+
+func (s *Server) HandleReplication(replStatus ReplicaRequest) error {
+	port := fmt.Sprintf("localhost:%s", replStatus.masterPort)
+	conn, err := net.Dial("tcp", port)
+	if err != nil {
+		s.MasterConn = nil //reset local server's master conn if TCP connection failed
+		return errors.New("ERR could not establish TCP connection with master server")
+	}
+	s.MasterConn = conn // set master connection
+
+	psyncResp, err := s.EstablishMasterHandshake()
+	if err != nil {
+		slog.Error("Handshake with master server failed", "err", err.Error())
+		return errors.New("ERR Handshake with master server failed")
+	}
+
+	conn.Write(s.Handler.Encoder.GetSimpleStringOk()) //send ok signal to master server to signify that we recieved a PSYNC response (and synchronize the two servers)
+
+	//TODO check to see if master server has enough saved previous commands to partial resync with replica...
+
+	//update replica's replicationID and offset to match the master server
+	s.ReplicationID = psyncResp.masterID
+	s.ReplicationOffset = psyncResp.masterOffset
+	s.Role = "replica"
+
+	if psyncResp.isPartialResync {
+		s.PartialResyncWithMaster(psyncResp, conn)
+	} else {
+		s.FullSyncWithMaster(psyncResp, conn)
+	}
+
+	slog.Info("Connection with master server established!", "conn", conn)
+	go s.HandleMasterServerStream(conn) //spin off a new go routine to handle all streamed write commands from master server
+	return nil
 }
 
 func (s *Server) PartialResyncWithMaster(psyncResp PsyncResponse, conn net.Conn) {
@@ -73,11 +85,8 @@ func (s *Server) FullSyncWithMaster(psyncResp PsyncResponse, conn net.Conn) {
 	s.LoadRDB(rdb)
 	conn.Write(s.Handler.Encoder.GetSimpleStringOk())
 
-	fmt.Println("xjfjsdflkajfdlkajflkajsdfjl")
-
 	var commandBytes []byte
-	commandBytes = s.WaitForBytes(s.MasterConn, 10) //wait 5 seconds to recieve buffered command bytes, if any
-	// fmt.Println("recieved bytes", string(commandBytes))
+	commandBytes = s.WaitForBytes(s.MasterConn, 5) //wait 7 seconds to recieve buffered command bytes, if any
 	if commandBytes == nil {
 		commandBytes = []byte{}
 		slog.Info("No buffered command bytes recieved from master server")

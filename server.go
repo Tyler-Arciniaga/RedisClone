@@ -1,15 +1,11 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"log/slog"
-	"math/rand"
 	"net"
 	"os"
-	"slices"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 )
@@ -30,54 +26,19 @@ type Server struct {
 	clientConnSet *SafeMap[net.Conn, bool]
 	replPortMap   *SafeMap[string, net.Conn]
 	replicaSet    *SafeMap[net.Conn, bool]
-	inProgReplMap *SafeMap[net.Conn, chan ([]byte)]
-	joinChan      chan (net.Conn)
-	leaveChan     chan (net.Conn)
-	HandlerLock   sync.RWMutex
+	inProgReplSet *SafeMap[net.Conn, bool]
 
-	Parser  Parser
+	joinChan    chan (net.Conn)
+	leaveChan   chan (net.Conn)
+	HandlerLock sync.RWMutex
+
+	Parser  *Parser
 	Handler *Handler
-}
-
-func (s *Server) HandleCommandArgs() {
-	for i, v := range os.Args {
-		switch v {
-		case "--port":
-			if i+1 < len(os.Args) {
-				s.LocalPort = os.Args[i+1]
-			}
-		case "--help":
-			fmt.Print("This is a multi-threaded Redis clone made entirely in Go!\n\nCommand Flags:\n--port [port number] : to configure the listening port\n--help : You're already here!\n")
-			os.Exit(0)
-		}
-		//TODO handle more command line args eventually
-	}
-}
-
-func (s *Server) GenerateReplicationID() string {
-	charset := "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-	var sb strings.Builder
-	sb.Grow(40)
-	for range 40 {
-		sb.WriteByte(charset[rand.Intn(len(charset))])
-	}
-
-	return sb.String()
-}
-
-func (s *Server) ConfigureMasterStatus() {
-	s.Role = "master"
-	s.MasterPort = ""
-	s.ReplicationID = s.GenerateReplicationID()
-	s.ReplicationOffset = 0
-	s.MasterConn = nil
 }
 
 // Bind to port, start new tcp server, and listen for client connections
 func (s *Server) StartServer() {
-	// handle command line flags and default to master status (regarding master-replica hierarchy)
-	s.HandleCommandArgs()
-	s.ConfigureMasterStatus()
+	s.ConfigureMasterStatus() //default to master status
 
 	port := fmt.Sprint(":", s.LocalPort)
 	ln, err := net.Listen("tcp", port) //binds to port localhost 6379
@@ -101,7 +62,6 @@ func (s *Server) StartServer() {
 
 		s.joinChan <- conn
 		go s.HandleClientStream(conn)
-
 	}
 }
 
@@ -146,8 +106,7 @@ func (s *Server) HandleClientStream(conn net.Conn) {
 			s.ReplicationOffset += uint64(consumed)
 
 			//if there are any replicas waiting for an RDB snapshot add command to buffer
-			if s.inProgReplMap.GetLen() > 0 {
-				fmt.Println("xyz123", string(buf[:consumed]))
+			if s.inProgReplSet.GetLen() > 0 {
 				s.commandBuffer = append(s.commandBuffer, buf[:consumed]...)
 			}
 
@@ -167,7 +126,6 @@ func (s *Server) HandleClientStream(conn net.Conn) {
 			//enter transaction mode for this client
 			s.HandleClientTransaction(conn)
 		}
-
 	}
 }
 
@@ -232,18 +190,8 @@ func (s *Server) ExecuteTransaction(conn net.Conn) {
 	}
 }
 
-func (s *Server) BundleServerInfo() map[string]any {
-	infoMap := make(map[string]any)
-	infoMap["tcp_port"] = s.LocalPort
-	infoMap["connected_clients"] = s.clientConnSet.GetLen()
-	infoMap["role"] = s.Role
-	infoMap["master_replid"] = s.ReplicationID
-	infoMap["master_repl_offset"] = s.ReplicationOffset
-	return infoMap
-}
-
 func (s *Server) HandleParsedCommands(cmd Command, isAtomic bool, conn net.Conn) []byte {
-	//the process of syncing with master server (partial or full sync) cannot hold rlock as then it can't execute initial buffered commands from master
+	//the process of syncing with master server (partial or full sync) cannot hold rlock because then it can't execute initial buffered commands from master
 	if !isAtomic && cmd.Name != "REPLICAOF" {
 		s.HandlerLock.RLock()
 		defer s.HandlerLock.RUnlock()
@@ -267,12 +215,11 @@ func (s *Server) HandleParsedCommands(cmd Command, isAtomic bool, conn net.Conn)
 	case "INFO":
 		response = s.Handler.HandleInfoCommand(cmd, s.BundleServerInfo())
 	case "REPLICAOF":
-		var repStatus ReplicaRequest
-		response, repStatus = s.Handler.HandleReplicaOfCommand(cmd)
-		s.HandleReplicaStatus(repStatus)
+		repStatus := s.Handler.HandleReplicaOfCommand(cmd)
+		response = s.HandleReplicaStatus(repStatus)
 	case "REPLCONF":
 		kvPair := s.Parser.ParseReplConfig(cmd)
-		s.HandleReplicaConfig(kvPair, conn)
+		s.HandleReplicaConfig(kvPair, conn) //internal Redis command
 
 	//commands that do change local data
 	case "SET":
@@ -299,31 +246,22 @@ func (s *Server) HandleParsedCommands(cmd Command, isAtomic bool, conn net.Conn)
 		response = s.Handler.Encoder.GenerateSimpleError("ERR client is currently not in transaction mode, enter transaction mode with MULTI command")
 	default:
 		response = s.Handler.Encoder.GenerateSimpleError(fmt.Sprintf("ERR unknown command '%s'", cmd.Name))
-
 	}
 
 	return response
 }
 
-func (s *Server) IsWriteCommand(cmdName string) bool {
-	writeCommands := []string{"SET", "LPUSH", "RPUSH", "LPOP", "BRPOP", "INCR", "MULTI", "EXEC", "DISCARD"}
-
-	if slices.Contains(writeCommands, cmdName) {
-		return true
-	}
-
-	return false
-}
-
 func (s *Server) StreamCommandToReplicas(commandBytes []byte) {
 	replicaConns := s.replicaSet.GetKeys()
 	for _, conn := range replicaConns {
-		conn.Write(commandBytes)
+		go func() {
+			conn.Write(commandBytes)
+		}()
 	}
 }
 
-func (s *Server) SendRDB2(rdb []byte) {
-	replicaConns := s.inProgReplMap.GetKeys()
+func (s *Server) SendRDB(rdb []byte) {
+	replicaConns := s.inProgReplSet.GetKeys()
 	for _, conn := range replicaConns {
 		go func() {
 			conn.Write(rdb)
@@ -331,15 +269,99 @@ func (s *Server) SendRDB2(rdb []byte) {
 	}
 }
 
-func (s *Server) SendCommandBufferToReplicas2() {
-	replicaConns := s.inProgReplMap.GetKeys()
+func (s *Server) SendCommandBufferToReplicas() {
+	replicaConns := s.inProgReplSet.GetKeys()
 	for _, conn := range replicaConns {
 		go func(commandBuffer []byte) {
-			fmt.Println("sending away!", string(commandBuffer))
 			conn.Write(commandBuffer)
 		}(s.commandBuffer)
 	}
 	s.commandBuffer = []byte{} //clear command buffer
+}
+
+func (s *Server) EstablishReplica(conn net.Conn) {
+	//wait for PSYNC req from replica
+	bytes := s.WaitForBytes(conn, 10) //wait 10 seconds to recieve PSYNC req
+	if bytes == nil {
+		return
+	}
+
+	//create PSYNC response
+	psyncReq, _, ok := s.Parser.TryParsingCommand(bytes)
+	if !ok {
+		slog.Error("recieved invalid Psync request from replicating server")
+		return
+	}
+
+	//write PSYNC response to replica
+	psyncResp, needsFullSync := s.Handler.HandlePsyncCommand(psyncReq, s.ReplicationID, s.ReplicationOffset)
+	conn.Write(psyncResp)
+
+	okSignal := s.WaitForBytes(conn, 10) //wait to recieve ok signal from replica about PSYNC response
+	if okSignal == nil {
+		slog.Error("did not recieve OK signal from replica server regarding PSYNC response")
+		return
+	}
+
+	if needsFullSync {
+		s.HandleFullSync(conn)
+	} else {
+		s.HandlePartialResync(conn, psyncReq)
+	}
+}
+
+func (s *Server) HandleFullSync(conn net.Conn) {
+	// create and send RDB file to all waiting replicas
+	var rdb []byte
+
+	//if this is the first time a full sync is being requested...
+	if s.inProgReplSet.GetLen() == 0 {
+		//there are currently no replicas waiting for a RDB snapshot -> create a new background process to generate an RDB snapshot
+		s.inProgReplSet.InsertKV(conn, true) //add current replica conn to set
+
+		rdb = s.CreateRDB()
+		s.SendRDB(rdb)
+
+		ok := s.WaitForBytes(conn, 10) //wait for ok signal from replica regarding RDB file
+		if ok == nil {
+			//TODO some error
+		}
+
+		s.SendCommandBufferToReplicas()
+
+		ok = s.WaitForBytes(conn, 30) //wait for ok signal from replica regarding command buffer
+		if ok == nil {
+			//TODO some error
+		}
+
+		s.inProgReplSet.Clear()
+	} else {
+		// there is at least one other replica waiting for an already in progress RDB snapshot...
+		s.inProgReplSet.InsertKV(conn, true) //add current replica conn to set
+		s.WaitForBytes(conn, 10)             //wait for ok signal from replica regarding RDB file
+		s.WaitForBytes(conn, 30)             //wait for ok signal from replica regarding command buffer
+	}
+
+	slog.Info("Finished full sync with a replica")
+}
+
+func (s *Server) HandlePartialResync(conn net.Conn, psyncReq Command) {
+	// stream the commands that the replica is missing and return
+	replicaOffset, _ := strconv.Atoi(string(psyncReq.Args[1]))
+	buf, ok := s.commandBacklog.ExtractNeededBytes(uint64(replicaOffset), s.ReplicationOffset)
+	if !ok {
+		//TODO return error and force replica into full sync (the replication backlog does not have all the bytes needed to get replica up to speed)
+	}
+
+	conn.Write(buf)
+
+	okSignal := s.WaitForBytes(conn, 10) //wait to recieve ok signal after replica confirms partial resync
+	if okSignal == nil {
+		slog.Error("did not recieve OK signal from replica server regarding partial resync")
+		return
+	}
+
+	slog.Info("Finished partial resync with replica")
 }
 
 func (s *Server) HandleReplicaConfig(kvPair []string, conn net.Conn) {
@@ -350,119 +372,14 @@ func (s *Server) HandleReplicaConfig(kvPair []string, conn net.Conn) {
 
 		conn.Write(s.Handler.Encoder.GetSimpleStringOk()) //reply to the replica's REPLCONF msg
 
-		//now wait for PSYNC exchange
-		bytes := s.WaitForBytes(conn, 10) //wait 10 seconds to recieve PSYNC req
-		if bytes == nil {
-			return
-		}
+		s.EstablishReplica(conn)
 
-		psyncReq, _, ok := s.Parser.TryParsingCommand(bytes)
-		if !ok {
-			slog.Error("recieved invalid Psync request from replicating server")
-			return
-		}
-
-		psyncResp, needsFullSync := s.Handler.HandlePsyncCommand(psyncReq, s.ReplicationID, s.ReplicationOffset)
-		conn.Write(psyncResp)
-
-		if needsFullSync {
-			// create and send RDB file to replica
-			replChan := make(chan ([]byte))
-			var rdb []byte
-
-			// if s.inProgReplMap.GetLen() == 0 {
-			// 	s.inProgReplMap.InsertKV(conn, replChan)
-			// 	rdb = s.CreateRDB()
-			// 	s.SendRDB2(rdb)
-			// }
-
-			if s.inProgReplMap.GetLen() == 0 {
-				//there are currently no replicas waiting for a RDB snapshot -> create a new background process to generate an RDB snapshot
-				s.inProgReplMap.InsertKV(conn, replChan) //add current replica conn to set
-				rdb = s.CreateRDB()
-				s.SendRDB2(rdb)
-				s.WaitForBytes(conn, 10)
-				s.SendCommandBufferToReplicas2()
-				s.inProgReplMap.Clear()
-				s.WaitForBytes(conn, 30) //wait 30 seconds to recieve ok signal from replica
-				// rdb = <-replChan
-
-			} else {
-				// there is at least one other replica waiting for an already in progress RDB snapshot
-				s.inProgReplMap.InsertKV(conn, replChan) //add current replica conn to set
-				s.WaitForBytes(conn, 10)                 //ok signal for RDB from replica
-				s.WaitForBytes(conn, 30)                 //wait for 30 seconds to recieve ok signal for that RDB and command buffer was written
-				// rdb = <-replChan
-			}
-
-			// s.inProgReplMap.DeleteKey(conn) //once you have RDB for replica, remove it from the in progress map
-			// conn.Write(rdb)
-
-			// bytes := s.WaitForBytes(conn, 10) //wait 5 seconds to recieve ok signal from replica server
-			// if bytes == nil {
-			// 	slog.Error("did not recieve ok response from replica after sending RDB snapshot")
-			// 	return
-			// }
-			// slog.Info("Recieved OK response from replica after sending RDB snapshot!")
-
-			// if len(s.commandBuffer) > 0 {
-			// 	slog.Info("Sending buffered commands to new replicas...")
-			// 	s.SendCommandBufferToReplica(conn)
-			// 	// s.SendCommandBufferToReplicas()
-
-			// 	bytes = s.WaitForBytes(conn, 10)
-			// 	if bytes == nil {
-			// 		return
-			// 	}
-
-			// 	slog.Info("Recieved OK response from replicas after sending buffered commands")
-			// }
-		} else {
-
-			// PARTIAL RESYNC **************************
-			okSignal := s.WaitForBytes(conn, 10) //wait 10 seconds to recieve ok signal from replica about PSYNC response
-			if okSignal == nil {
-				slog.Error("did not recieve OK signal from replica server regarding PSYNC response")
-				return
-			}
-
-			// stream the commands that the replica is missing and return
-			replicaOffset, _ := strconv.Atoi(string(psyncReq.Args[1]))
-			buf, ok := s.commandBacklog.ExtractNeededBytes(uint64(replicaOffset), s.ReplicationOffset)
-			if !ok {
-				//TODO return error and force replica into full sync (the replication backlog does not have all the bytes needed to get replica up to speed)
-			}
-
-			conn.Write(buf)
-
-			okSignal = s.WaitForBytes(conn, 10) //recieve ok signal after replica confirms partial resync
-			if okSignal == nil {
-				slog.Error("did not recieve OK signal from replica server regarding partial resync")
-				return
-			}
-			slog.Info("Finished partial resync with replica", "conn", conn)
-		}
+		//at this point the connection is a fully established replica, thus we can begin streaming all our write commands to it
+		s.replicaSet.InsertKV(conn, true)
+		s.clientConnSet.DeleteKey(conn)
+		slog.Info("New replica registered!", "conn", conn)
 	}
 
-	//at this point the connection is a fully established replica, thus we can begin streaming all our write commands to it
-	s.replicaSet.InsertKV(conn, true)
-	s.clientConnSet.DeleteKey(conn)
-	slog.Info("New replica registered", "conn", conn)
-}
-
-func (s *Server) SendCommandBufferToReplica(conn net.Conn) {
-	conn.Write(s.commandBuffer)
-}
-
-func (s *Server) SendCommandBufferToReplicas() {
-	replicaConns := s.inProgReplMap.GetKeys()
-	for _, conn := range replicaConns {
-		go func(commandBuffer []byte) {
-			conn.Write(commandBuffer)
-		}(s.commandBuffer)
-	}
-
-	s.commandBuffer = []byte{} //reset command buffer
 }
 
 func (s *Server) CreateRDB() []byte {
@@ -471,48 +388,7 @@ func (s *Server) CreateRDB() []byte {
 	rdb = append(rdb, []byte("0001")...)
 	rdb = append(rdb, 0xFF)
 
-	time.Sleep(2 * time.Second) // placeholder, this mimics the time it might take to generate a new RDB snapshot for the local data
+	time.Sleep(1 * time.Second) // placeholder, this mimics the time it might take to generate a new RDB snapshot for the local data
 
 	return rdb
-}
-
-func (s *Server) SendRDB(rdb []byte) {
-	replyChans := s.inProgReplMap.GetValues()
-	for _, replChan := range replyChans {
-		replChan <- rdb
-	}
-}
-
-func (s *Server) WaitForBytes(conn net.Conn, n uint64) []byte {
-	buf := make([]byte, 4096)
-
-	ctx, cancel := context.WithTimeout(context.TODO(), time.Duration(n)*time.Second) //give the destination server 10 seconds to respond
-	defer cancel()
-
-	respChan := make(chan ([]byte))
-
-	go func() {
-		n, err := conn.Read(buf)
-		fmt.Println("xyz", string(buf[:n]))
-		if err != nil {
-			slog.Error("reading from connection", "err", err)
-			respChan <- nil
-		} else {
-			got := buf[:n]
-			respChan <- got
-		}
-	}()
-
-	select {
-	case got := <-respChan:
-		if got == nil {
-			return nil
-		} //error recieving bytes from destination connection
-
-		return got
-
-	case <-ctx.Done():
-		slog.Error("TIMEOUT server did not recieve expected bytes in time")
-		return nil
-	}
 }
