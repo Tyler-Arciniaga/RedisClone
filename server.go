@@ -279,43 +279,54 @@ func (s *Server) SendCommandBufferToReplicas() {
 	s.commandBuffer = []byte{} //clear command buffer
 }
 
-func (s *Server) EstablishReplica(conn net.Conn) {
+func (s *Server) EstablishReplica(conn net.Conn) bool {
 	//wait for PSYNC req from replica
 	bytes := s.WaitForBytes(conn, 10) //wait 10 seconds to recieve PSYNC req
 	if bytes == nil {
-		return
+		return false
 	}
 
-	//create PSYNC response
+	//Parse PSYNC request
 	psyncReq, _, ok := s.Parser.TryParsingCommand(bytes)
 	if !ok {
 		slog.Error("recieved invalid Psync request from replicating server")
-		return
+		return false
 	}
 
 	//write PSYNC response to replica
-	psyncResp, needsFullSync := s.Handler.HandlePsyncCommand(psyncReq, s.ReplicationID, s.ReplicationOffset)
+	psyncResp, needsFullSync := s.Handler.HandlePsyncCommand(psyncReq, s.ReplicationID, s.ReplicationOffset, &s.commandBacklog)
+
 	conn.Write(psyncResp)
 
 	okSignal := s.WaitForBytes(conn, 10) //wait to recieve ok signal from replica about PSYNC response
 	if okSignal == nil {
 		slog.Error("did not recieve OK signal from replica server regarding PSYNC response")
-		return
+		return false
 	}
 
 	if needsFullSync {
-		s.HandleFullSync(conn)
+		ok := s.HandleFullSync(conn)
+		if !ok {
+			return false
+		}
 	} else {
-		s.HandlePartialResync(conn, psyncReq)
+		ok := s.HandlePartialResync(conn, psyncReq)
+		if !ok {
+			return false
+		}
 	}
+
+	return true
 }
 
-func (s *Server) HandleFullSync(conn net.Conn) {
+func (s *Server) HandleFullSync(conn net.Conn) bool {
 	// create and send RDB file to all waiting replicas
 	var rdb []byte
 
 	//if this is the first time a full sync is being requested...
 	if s.inProgReplSet.GetLen() == 0 {
+		defer s.inProgReplSet.Clear() // always clear the in progress replica set when the first replica queued to recieve RDB finishes (they are the lead replica)
+
 		//there are currently no replicas waiting for a RDB snapshot -> create a new background process to generate an RDB snapshot
 		s.inProgReplSet.InsertKV(conn, true) //add current replica conn to set
 
@@ -324,33 +335,46 @@ func (s *Server) HandleFullSync(conn net.Conn) {
 
 		ok := s.WaitForBytes(conn, 10) //wait for ok signal from replica regarding RDB file
 		if ok == nil {
-			//TODO some error
+			return false
 		}
 
 		s.SendCommandBufferToReplicas()
 
 		ok = s.WaitForBytes(conn, 30) //wait for ok signal from replica regarding command buffer
 		if ok == nil {
-			//TODO some error
+			return false
 		}
 
-		s.inProgReplSet.Clear()
 	} else {
 		// there is at least one other replica waiting for an already in progress RDB snapshot...
 		s.inProgReplSet.InsertKV(conn, true) //add current replica conn to set
-		s.WaitForBytes(conn, 10)             //wait for ok signal from replica regarding RDB file
-		s.WaitForBytes(conn, 30)             //wait for ok signal from replica regarding command buffer
+
+		ok := s.WaitForBytes(conn, 10) //wait for ok signal from replica regarding RDB file
+		if ok == nil {
+			return false
+		}
+		ok = s.WaitForBytes(conn, 30) //wait for ok signal from replica regarding command buffer
+		if ok == nil {
+			return false
+		}
 	}
 
 	slog.Info("Finished full sync with a replica")
+
+	return true
 }
 
-func (s *Server) HandlePartialResync(conn net.Conn, psyncReq Command) {
+func (s *Server) HandlePartialResync(conn net.Conn, psyncReq Command) bool {
 	// stream the commands that the replica is missing and return
 	replicaOffset, _ := strconv.Atoi(string(psyncReq.Args[1]))
 	buf, ok := s.commandBacklog.ExtractNeededBytes(uint64(replicaOffset), s.ReplicationOffset)
 	if !ok {
 		//TODO return error and force replica into full sync (the replication backlog does not have all the bytes needed to get replica up to speed)
+		slog.Info("Not enough command bytes in backlog for partial resync, falling back to full sync...")
+		ok = s.HandleFullSync(conn)
+		if !ok {
+			return false
+		} // if full sync was unsuccessfull...
 	}
 
 	conn.Write(buf)
@@ -358,10 +382,11 @@ func (s *Server) HandlePartialResync(conn net.Conn, psyncReq Command) {
 	okSignal := s.WaitForBytes(conn, 10) //wait to recieve ok signal after replica confirms partial resync
 	if okSignal == nil {
 		slog.Error("did not recieve OK signal from replica server regarding partial resync")
-		return
+		return false
 	}
 
 	slog.Info("Finished partial resync with replica")
+	return true
 }
 
 func (s *Server) HandleReplicaConfig(kvPair []string, conn net.Conn) {
@@ -372,12 +397,13 @@ func (s *Server) HandleReplicaConfig(kvPair []string, conn net.Conn) {
 
 		conn.Write(s.Handler.Encoder.GetSimpleStringOk()) //reply to the replica's REPLCONF msg
 
-		s.EstablishReplica(conn)
-
-		//at this point the connection is a fully established replica, thus we can begin streaming all our write commands to it
-		s.replicaSet.InsertKV(conn, true)
-		s.clientConnSet.DeleteKey(conn)
-		slog.Info("New replica registered!", "conn", conn)
+		ok := s.EstablishReplica(conn)
+		if ok {
+			//at this point the connection is a fully established replica, thus we can begin streaming all our write commands to it
+			s.replicaSet.InsertKV(conn, true)
+			s.clientConnSet.DeleteKey(conn)
+			slog.Info("New replica registered!", "conn", conn)
+		}
 	}
 
 }

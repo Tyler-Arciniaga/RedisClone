@@ -1,7 +1,5 @@
 package main
 
-import "fmt"
-
 type CommandBacklog struct {
 	capacity     uint64
 	size         uint64
@@ -24,12 +22,11 @@ func (b *CommandBacklog) AddCommandBytes(buf []byte) {
 }
 
 func (b *CommandBacklog) ExtractNeededBytes(replOffset uint64, masterOffset uint64) ([]byte, bool) {
-	if b.backlogStart < replOffset {
-		return nil, false
-	}
+	// if replOffset < b.backlogStart {
+	// 	return nil, false
+	// }
 
 	var ptr uint64
-	fmt.Println(replOffset, b.backlogStart)
 	for range replOffset - b.backlogStart + 1 {
 		ptr = (ptr + 1) % b.capacity
 	}
@@ -41,4 +38,8 @@ func (b *CommandBacklog) ExtractNeededBytes(replOffset uint64, masterOffset uint
 	}
 
 	return buf, true
+}
+
+func (b *CommandBacklog) HasNeededBytes(replOffset uint64) bool {
+	return b.backlogStart <= replOffset
 }
