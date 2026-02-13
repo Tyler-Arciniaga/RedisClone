@@ -17,7 +17,7 @@ func main() {
 
 	clientConnSet := NewSafeMap[net.Conn, bool]()
 	replicaPortMap := NewSafeMap[string, net.Conn]()
-	replicaSet := NewSafeMap[net.Conn, bool]()
+	replicaMap := NewSafeMap[net.Conn, uint64]()
 	inProgReplicaMap := NewSafeMap[net.Conn, bool]()
 
 	server := Server{
@@ -28,12 +28,15 @@ func main() {
 		MasterPort:        "",
 		MasterConn:        nil,
 
+		AckTicker:   nil,
+		AckStopChan: nil,
+
 		commandBuffer:  []byte{},
 		commandBacklog: commandBacklog,
 
 		clientConnSet: clientConnSet,
 		replPortMap:   replicaPortMap,
-		replicaSet:    replicaSet,
+		replicaMap:    replicaMap,
 		inProgReplSet: inProgReplicaMap,
 
 		joinChan:    make(chan net.Conn),

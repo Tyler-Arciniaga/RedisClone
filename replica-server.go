@@ -7,6 +7,7 @@ import (
 	"net"
 	"slices"
 	"strconv"
+	"time"
 )
 
 // all logic pertaining to a replica server (not root master server)
@@ -61,6 +62,8 @@ func (s *Server) HandleReplication(replStatus ReplicaRequest) error {
 
 	slog.Info("Connection with master server established!")
 	go s.HandleMasterServerStream(conn) //spin off a new go routine to handle all streamed write commands from master server
+	s.StartSendingOffsetAcks()
+
 	return nil
 }
 
@@ -130,6 +133,28 @@ func (s *Server) HandleMasterServerStream(conn net.Conn) {
 
 		isAtomic := false
 		s.HandleParsedCommands(cmd, isAtomic, conn)
+	}
+}
+
+func (s *Server) StartSendingOffsetAcks() {
+	ticker := time.NewTicker(time.Duration(2) * time.Second)
+	stopChan := make(chan (bool))
+
+	s.AckTicker = ticker
+	s.AckStopChan = stopChan
+
+	go s.SendOffsetAcks(s.MasterConn, ticker, stopChan) // spin of a new go routine to periodically send a heatbeat / offset ACK to master server
+}
+
+func (s *Server) SendOffsetAcks(conn net.Conn, ticker *time.Ticker, returnChan chan (bool)) {
+	for {
+		select {
+		case <-ticker.C:
+			fmt.Println("sendign ACK")
+			conn.Write(s.Handler.Encoder.GenerateOffsetAck(s.ReplicationOffset))
+		case <-returnChan:
+			return
+		}
 	}
 }
 

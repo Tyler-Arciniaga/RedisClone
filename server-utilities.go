@@ -27,7 +27,18 @@ func (s *Server) ConfigureMasterStatus() {
 	s.MasterPort = ""
 	s.ReplicationID = s.GenerateReplicationID()
 	s.ReplicationOffset = 0
+
+	if s.MasterConn != nil {
+		s.MasterConn.Close()
+	}
 	s.MasterConn = nil
+
+	if s.AckTicker != nil {
+		s.AckTicker.Stop()
+		s.AckStopChan <- true
+	}
+	s.AckTicker = nil
+	s.AckStopChan = nil
 }
 
 func (s *Server) WaitForBytes(conn net.Conn, duration uint64) []byte {

@@ -20,12 +20,15 @@ type Server struct {
 	MasterPort        string //may be uninitialized if role is master
 	MasterConn        net.Conn
 
+	AckTicker   *time.Ticker
+	AckStopChan chan (bool)
+
 	commandBuffer  []byte //stores commands while RDB snapshot is being created
 	commandBacklog CommandBacklog
 
 	clientConnSet *SafeMap[net.Conn, bool]
 	replPortMap   *SafeMap[string, net.Conn]
-	replicaSet    *SafeMap[net.Conn, bool]
+	replicaMap    *SafeMap[net.Conn, uint64] //maps replicas to their offset
 	inProgReplSet *SafeMap[net.Conn, bool]
 
 	joinChan    chan (net.Conn)
@@ -67,7 +70,7 @@ func (s *Server) StartServer() {
 
 func (s *Server) RegisterNewConnections() {
 	for c := range s.joinChan {
-		s.clientConnSet.InsertKV(c, true)
+		s.clientConnSet.UpsertKV(c, true)
 	}
 }
 
@@ -78,7 +81,7 @@ func (s *Server) DisconnectConnections() {
 		if ok := s.clientConnSet.DeleteKey(c); ok {
 			slog.Info("A client has disconnected")
 		} else {
-			s.replicaSet.DeleteKey(c)
+			s.replicaMap.DeleteKey(c)
 			slog.Info("A replica has disconnected")
 		}
 	}
@@ -252,7 +255,7 @@ func (s *Server) HandleParsedCommands(cmd Command, isAtomic bool, conn net.Conn)
 }
 
 func (s *Server) StreamCommandToReplicas(commandBytes []byte) {
-	replicaConns := s.replicaSet.GetKeys()
+	replicaConns := s.replicaMap.GetKeys()
 	for _, conn := range replicaConns {
 		go func() {
 			conn.Write(commandBytes)
@@ -328,7 +331,7 @@ func (s *Server) HandleFullSync(conn net.Conn) bool {
 		defer s.inProgReplSet.Clear() // always clear the in progress replica set when the first replica queued to recieve RDB finishes (they are the lead replica)
 
 		//there are currently no replicas waiting for a RDB snapshot -> create a new background process to generate an RDB snapshot
-		s.inProgReplSet.InsertKV(conn, true) //add current replica conn to set
+		s.inProgReplSet.UpsertKV(conn, true) //add current replica conn to set
 
 		rdb = s.CreateRDB()
 		s.SendRDB(rdb)
@@ -347,7 +350,7 @@ func (s *Server) HandleFullSync(conn net.Conn) bool {
 
 	} else {
 		// there is at least one other replica waiting for an already in progress RDB snapshot...
-		s.inProgReplSet.InsertKV(conn, true) //add current replica conn to set
+		s.inProgReplSet.UpsertKV(conn, true) //add current replica conn to set
 
 		ok := s.WaitForBytes(conn, 10) //wait for ok signal from replica regarding RDB file
 		if ok == nil {
@@ -392,7 +395,7 @@ func (s *Server) HandlePartialResync(conn net.Conn, psyncReq Command) bool {
 func (s *Server) HandleReplicaConfig(kvPair []string, conn net.Conn) {
 	switch kvPair[0] {
 	case "listening-port":
-		s.replPortMap.InsertKV(kvPair[1], conn)
+		s.replPortMap.UpsertKV(kvPair[1], conn)
 		slog.Info("registered a new replica port", "port", kvPair[1])
 
 		conn.Write(s.Handler.Encoder.GetSimpleStringOk()) //reply to the replica's REPLCONF msg
@@ -400,12 +403,15 @@ func (s *Server) HandleReplicaConfig(kvPair []string, conn net.Conn) {
 		ok := s.EstablishReplica(conn)
 		if ok {
 			//at this point the connection is a fully established replica, thus we can begin streaming all our write commands to it
-			s.replicaSet.InsertKV(conn, true)
+			s.replicaMap.UpsertKV(conn, s.ReplicationOffset)
 			s.clientConnSet.DeleteKey(conn)
 			slog.Info("New replica registered!", "conn", conn)
+			// go s.AcceptOffsetAcks(conn)
 		}
+	case "ACK":
+		replicaOffset, _ := strconv.Atoi(string(kvPair[1]))
+		s.replicaMap.UpsertKV(conn, uint64(replicaOffset))
 	}
-
 }
 
 func (s *Server) CreateRDB() []byte {

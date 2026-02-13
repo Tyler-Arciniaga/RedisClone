@@ -13,7 +13,7 @@ func NewSafeMap[K comparable, V any]() *SafeMap[K, V] {
 	return &SafeMap[K, V]{data: make(map[K]V), mtx: sync.RWMutex{}}
 }
 
-func (s *SafeMap[T, Y]) InsertKV(key T, value Y) {
+func (s *SafeMap[T, Y]) UpsertKV(key T, value Y) {
 	s.mtx.Lock()
 	defer s.mtx.Unlock()
 
