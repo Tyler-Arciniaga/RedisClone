@@ -152,39 +152,41 @@ func (s *Server) WaitForReplicas(cmd Command) []byte {
 	timeout, _ := strconv.Atoi(string(cmd.Args[1]))
 	confirmedReplicaSet := NewSafeMap[net.Conn, bool]()
 
-	timer := time.NewTimer(time.Duration(timeout) * time.Millisecond)
-	defer timer.Stop()
+	var timer *time.Timer
 
-	if timeout == 0 {
-		//block infinitely
-	} else {
-		for {
-			numConfirmed := confirmedReplicaSet.GetLen()
-			if numConfirmed >= numReplicas {
-				return s.Handler.Encoder.GenerateInt(numConfirmed)
-			}
+	if timeout != 0 {
+		timer = time.NewTimer(time.Duration(timeout) * time.Millisecond)
+		defer timer.Stop()
+	}
 
+	for {
+		numConfirmed := confirmedReplicaSet.GetLen()
+		if numConfirmed >= numReplicas {
+			return s.Handler.Encoder.GenerateInt(numConfirmed)
+		}
+
+		if timeout != 0 {
 			select {
 			case <-timer.C:
 				return s.Handler.Encoder.GenerateInt(0)
 			default:
-				for _, item := range s.replicaMap.GetItems() {
-					go func() {
-						conn := item[0].(net.Conn)
-						offset := item[1].(uint64)
-						// fmt.Println(conn, offset)
-						if offset >= localOffset {
-							// fmt.Println("here")
-							confirmedReplicaSet.UpsertKV(conn, true)
-						}
-					}()
-				}
+				break
 			}
 		}
 
-	}
+		for _, item := range s.replicaMap.GetItems() {
+			go func() {
+				conn := item[0].(net.Conn)
+				offset := item[1].(uint64)
+				// fmt.Println(conn, offset)
+				if offset >= localOffset {
+					// fmt.Println("here")
+					confirmedReplicaSet.UpsertKV(conn, true)
+				}
+			}()
+		}
 
-	return s.Handler.Encoder.GenerateInt(confirmedReplicaSet.GetLen())
+	}
 }
 
 func (s *Server) HandleClientTransaction(conn net.Conn) {
