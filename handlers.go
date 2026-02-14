@@ -270,3 +270,59 @@ func (h *Handler) DiscardCommandQueue(conn net.Conn) []byte {
 	return h.Encoder.GetSimpleStringOk()
 
 }
+
+// Replication Commands
+func (h *Handler) HandleInfoCommand(cmd Command, serverInfo map[string]any) []byte {
+	var req InfoRequest //defaults to all booleans being false
+
+	serverInfo["blocked_clients"] = h.Store.GetNumBlockedClients() //need to fetch this info seperately from store
+
+	if len(cmd.Args) > 0 {
+		switch string(cmd.Args[0]) {
+		case "server":
+			req.hasServer = true
+		case "client":
+			req.hasClient = true
+		case "replication":
+			req.hasReplication = true
+		}
+	} else {
+		req = InfoRequest{hasServer: true, hasClient: true, hasReplication: true}
+	}
+
+	req.serverInfo = serverInfo
+
+	return h.Encoder.GetSysInfo(req)
+}
+
+func (h *Handler) HandleReplicaOfCommand(cmd Command) ReplicaRequest {
+	var req ReplicaRequest
+	if len(cmd.Args) == 1 {
+		//client sent host port, therefore it wants to create replica
+		req.isNowMaster = false
+		req.masterPort = string(cmd.Args[0])
+	} else {
+		//client sent REPLICAOF NO ONE, therefore it wants to establish  as master
+		req.isNowMaster = true
+	}
+	return req
+}
+
+func (h *Handler) HandleReplicaConfigCommand(cmd Command) ([]byte, []string) {
+	return h.Encoder.GetSimpleStringOk(), []string{string(cmd.Args[0]), string(cmd.Args[1])}
+}
+
+func (h *Handler) HandlePsyncCommand(cmd Command, localReplID string, localReplOffset uint64, commandBacklog *CommandBacklog) ([]byte, bool) {
+	replID := cmd.Args[0]
+	replOffset, _ := strconv.Atoi(string(cmd.Args[1]))
+
+	if string(replID) == localReplID && commandBacklog.HasNeededBytes(uint64(replOffset)) {
+		// this replica was once connected to local master server -> partial resync
+		needsFullResync := false
+		return h.Encoder.GeneratePartialResyncResp(), needsFullResync
+	} else {
+		// this is a new replica or command backlog does not have enough history for partial resync -> full resync
+		needsFullResync := true
+		return h.Encoder.GenerateFullResyncResp(localReplID, localReplOffset), needsFullResync
+	}
+}

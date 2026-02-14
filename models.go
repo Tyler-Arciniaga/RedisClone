@@ -74,4 +74,21 @@ type Waiter struct {
 	CleanUpPointers map[string]*list.Element
 }
 
-// Transaction Structs
+// Replication structs
+type InfoRequest struct {
+	hasServer      bool
+	hasClient      bool
+	hasReplication bool
+	serverInfo     map[string]any
+} //TODO add more INFO parameters (just has the basic ones for now)
+
+type ReplicaRequest struct {
+	isNowMaster bool
+	masterPort  string
+}
+
+type PsyncResponse struct {
+	isPartialResync bool
+	masterID        string
+	masterOffset    uint64
+}
