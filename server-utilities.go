@@ -61,7 +61,7 @@ func (s *Server) WaitForBytes(conn net.Conn, duration uint64) []byte {
 }
 
 func (s *Server) IsWriteCommand(cmdName string) bool {
-	writeCommands := []string{"SET", "LPUSH", "RPUSH", "LPOP", "BRPOP", "INCR", "MULTI", "EXEC", "DISCARD"}
+	writeCommands := []string{"SET", "LPUSH", "RPUSH", "LPOP", "BRPOP", "INCR", "MULTI", "EXEC", "DISCARD", "WAIT"}
 	if slices.Contains(writeCommands, cmdName) {
 		return true
 	}

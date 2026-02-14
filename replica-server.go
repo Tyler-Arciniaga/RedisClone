@@ -150,7 +150,6 @@ func (s *Server) SendOffsetAcks(conn net.Conn, ticker *time.Ticker, returnChan c
 	for {
 		select {
 		case <-ticker.C:
-			fmt.Println("sendign ACK")
 			conn.Write(s.Handler.Encoder.GenerateOffsetAck(s.ReplicationOffset))
 		case <-returnChan:
 			return

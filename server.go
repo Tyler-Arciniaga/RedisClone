@@ -91,6 +91,8 @@ func (s *Server) HandleClientStream(conn net.Conn) {
 	buf := make([]byte, 4096)
 	temp := make([]byte, 4096)
 
+	var singleCommand []byte
+
 	for {
 		n, err := conn.Read(temp)
 		if err != nil {
@@ -104,24 +106,32 @@ func (s *Server) HandleClientStream(conn net.Conn) {
 			continue
 		}
 
+		singleCommand = buf
+
+		buf = buf[consumed:]
+
+		isAtomic := false
+
+		resp := s.HandleParsedCommands(cmd, isAtomic, conn)
+
 		if s.IsWriteCommand(cmd.Name) {
 			//increment replica offset
 			s.ReplicationOffset += uint64(consumed)
 
 			//if there are any replicas waiting for an RDB snapshot add command to buffer
 			if s.inProgReplSet.GetLen() > 0 {
-				s.commandBuffer = append(s.commandBuffer, buf[:consumed]...)
+				s.commandBuffer = append(s.commandBuffer, singleCommand...)
 			}
 
-			s.commandBacklog.AddCommandBytes(buf[:consumed])
+			s.commandBacklog.AddCommandBytes(singleCommand)
 
-			go s.StreamCommandToReplicas(buf)
+			go s.StreamCommandToReplicas(singleCommand)
+
+			if cmd.Name == "WAIT" {
+				//TODO handle Wait command logic here
+				resp = s.WaitForReplicas(cmd)
+			}
 		}
-
-		buf = buf[consumed:]
-
-		isAtomic := false
-		resp := s.HandleParsedCommands(cmd, isAtomic, conn)
 
 		conn.Write(resp)
 
@@ -130,6 +140,51 @@ func (s *Server) HandleClientStream(conn net.Conn) {
 			s.HandleClientTransaction(conn)
 		}
 	}
+}
+
+func (s *Server) WaitForReplicas(cmd Command) []byte {
+	if s.replicaMap.GetLen() == 0 {
+		return s.Handler.Encoder.GenerateInt(0)
+	}
+
+	localOffset := s.ReplicationOffset
+	numReplicas, _ := strconv.Atoi(string(cmd.Args[0]))
+	timeout, _ := strconv.Atoi(string(cmd.Args[1]))
+	confirmedReplicaSet := NewSafeMap[net.Conn, bool]()
+
+	timer := time.NewTimer(time.Duration(timeout) * time.Millisecond)
+	defer timer.Stop()
+
+	if timeout == 0 {
+		//block infinitely
+	} else {
+		for {
+			numConfirmed := confirmedReplicaSet.GetLen()
+			if numConfirmed >= numReplicas {
+				return s.Handler.Encoder.GenerateInt(numConfirmed)
+			}
+
+			select {
+			case <-timer.C:
+				return s.Handler.Encoder.GenerateInt(0)
+			default:
+				for _, item := range s.replicaMap.GetItems() {
+					go func() {
+						conn := item[0].(net.Conn)
+						offset := item[1].(uint64)
+						// fmt.Println(conn, offset)
+						if offset >= localOffset {
+							// fmt.Println("here")
+							confirmedReplicaSet.UpsertKV(conn, true)
+						}
+					}()
+				}
+			}
+		}
+
+	}
+
+	return s.Handler.Encoder.GenerateInt(confirmedReplicaSet.GetLen())
 }
 
 func (s *Server) HandleClientTransaction(conn net.Conn) {

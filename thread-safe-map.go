@@ -65,6 +65,18 @@ func (s *SafeMap[T, Y]) GetValues() []Y {
 	return res
 }
 
+func (s *SafeMap[T, Y]) GetItems() [][]any {
+	s.mtx.RLock()
+	defer s.mtx.RUnlock()
+
+	var res [][]any
+	for key, value := range s.data {
+		res = append(res, []any{key, value})
+	}
+
+	return res
+}
+
 func (s *SafeMap[T, Y]) GetLen() int {
 	s.mtx.RLock()
 	defer s.mtx.RUnlock()
