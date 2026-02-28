@@ -329,7 +329,7 @@ func (h *Handler) HandlePsyncCommand(cmd Command, localReplID string, localReplO
 }
 
 // Pub Sub Commands
-func (h *Handler) HandleSubscribeCommand(cmd Command, conn net.Conn) {
+func (h *Handler) HandleSubscribeCommand(cmd Command, conn net.Conn) uint64 {
 	numChannelsIn := h.getNumberOfSubscribedChannels(conn)
 
 	for _, chanName := range cmd.Args {
@@ -343,8 +343,19 @@ func (h *Handler) HandleSubscribeCommand(cmd Command, conn net.Conn) {
 		}
 	}
 
+	return numChannelsIn
 }
 
 func (h *Handler) getNumberOfSubscribedChannels(conn net.Conn) uint64 {
 	return h.SubscriberChannels.GetNumSubscribedChan(conn)
+}
+
+func (h *Handler) HandleSubscribedPingCommand(cmd Command) []byte {
+	arg := []byte("")
+	if len(cmd.Args) > 0 {
+		arg = cmd.Args[0]
+	}
+
+	array := [][]byte{[]byte("PONG"), arg}
+	return h.Encoder.GenerateArray(array, false)
 }

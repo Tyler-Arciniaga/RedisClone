@@ -12,9 +12,8 @@ type Node interface {
 }
 
 type ClientObject struct {
-	Conn               net.Conn
-	InSubscribedMode   bool
-	SubscribedChannels []string
+	Conn                  net.Conn
+	NumSubscribedChannels uint64
 }
 
 type ReplicaObject struct {

@@ -67,7 +67,7 @@ func (s *Server) StartServer() {
 			continue
 		}
 
-		c := &ClientObject{Conn: conn, InSubscribedMode: false, SubscribedChannels: make([]string, 0)}
+		c := &ClientObject{Conn: conn, NumSubscribedChannels: 0}
 		s.joinChan <- c
 		go s.HandleClientStream(c)
 	}
@@ -98,7 +98,7 @@ func (s *Server) HandleClientStream(c *ClientObject) {
 	temp := make([]byte, 4096)
 
 	var singleCommand []byte
-
+	var resp []byte
 	for {
 		n, err := c.Conn.Read(temp)
 		if err != nil {
@@ -118,7 +118,11 @@ func (s *Server) HandleClientStream(c *ClientObject) {
 
 		isAtomic := false
 
-		resp := s.HandleParsedCommands(cmd, isAtomic, c.Conn)
+		if c.NumSubscribedChannels > 0 {
+			resp = s.HandleSubscribedClientCommands(cmd)
+		} else {
+			resp = s.HandleParsedCommands(cmd, isAtomic, c.Conn)
+		}
 
 		if s.IsWriteCommand(cmd.Name) {
 			//increment replica offset
@@ -263,6 +267,7 @@ func (s *Server) HandleSubscribedClientCommands(cmd Command) []byte {
 	switch cmd.Name {
 	case "SUBSCRIBE":
 	case "PING":
+		response = s.Handler.HandleSubscribedPingCommand(cmd)
 	case "UNSUBSCRIBE":
 	case "PUBLISH":
 	}
@@ -301,7 +306,10 @@ func (s *Server) HandleParsedCommands(cmd Command, isAtomic bool, conn net.Conn)
 		kvPair := s.Parser.ParseReplConfig(cmd)
 		s.HandleReplicaConfig(kvPair, conn) //internal Redis command
 	case "SUBSCRIBE":
-		s.Handler.HandleSubscribeCommand(cmd, conn)
+		numChans := s.Handler.HandleSubscribeCommand(cmd, conn)
+		client, _ := s.clientConnSet.GetValue(conn)
+		client.NumSubscribedChannels = numChans
+		s.clientConnSet.UpsertKV(conn, client)
 	case "PUBLISH":
 		//TODO
 
