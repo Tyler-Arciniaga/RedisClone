@@ -92,3 +92,9 @@ type PsyncResponse struct {
 	masterID        string
 	masterOffset    uint64
 }
+
+// Pub Sub structs
+type SubscribeMessage struct {
+	ChanName        []byte
+	CurrNumChannels uint64
+}

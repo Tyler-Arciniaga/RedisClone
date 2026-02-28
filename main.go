@@ -11,7 +11,7 @@ import (
 func main() {
 	port := HandleCommandArgs()
 	store := Store{store: make(map[string]RedisObject), listClientQueue: make(map[string]*list.List)}
-	handler := Handler{Store: &store, ClientCommandQueue: make(map[net.Conn][]Command)}
+	handler := Handler{Store: &store, ClientCommandQueue: make(map[net.Conn][]Command), SubscriberChannels: SubscriberChannels{Channels: make(map[string]*Channel)}}
 
 	commandBacklog := CommandBacklog{capacity: 100, size: 0, writeHead: 0, backlogStart: 0, Backlog: make([]byte, 100)}
 

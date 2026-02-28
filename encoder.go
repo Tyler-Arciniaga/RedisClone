@@ -79,6 +79,15 @@ func (e *Encoder) GenerateArray(array [][]byte, isForTransaction bool) []byte {
 	return out
 }
 
+func (e *Encoder) GenerateSubscribeMessage(m SubscribeMessage) []byte {
+	out := make([]byte, 0)
+	out = append(out, '*', '3', '\r', '\n')
+	out = append(out, e.GenerateBulkString([]byte("subscribe"))...)
+	out = append(out, e.GenerateBulkString(m.ChanName)...)
+	out = append(out, e.GenerateInt(int(m.CurrNumChannels))...)
+	return out
+}
+
 func (e *Encoder) GenerateNilArray() []byte {
 	out := make([]byte, 0)
 	out = append(out, '*')

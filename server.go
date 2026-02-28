@@ -31,6 +31,8 @@ type Server struct {
 	replicaMap    *SafeMap[net.Conn, uint64] //maps replicas to their offset
 	inProgReplSet *SafeMap[net.Conn, bool]
 
+	subscribeChannels *SafeMap[net.Conn, bool]
+
 	joinChan    chan (net.Conn)
 	leaveChan   chan (net.Conn)
 	HandlerLock sync.RWMutex
@@ -280,6 +282,10 @@ func (s *Server) HandleParsedCommands(cmd Command, isAtomic bool, conn net.Conn)
 	case "REPLCONF":
 		kvPair := s.Parser.ParseReplConfig(cmd)
 		s.HandleReplicaConfig(kvPair, conn) //internal Redis command
+	case "SUBSCRIBE":
+		s.Handler.HandleSubscribeCommand(cmd, conn)
+	case "PUBLISH":
+		//TODO
 
 	//commands that do change local data
 	case "SET":

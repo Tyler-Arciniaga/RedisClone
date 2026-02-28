@@ -15,6 +15,7 @@ type Handler struct {
 	Encoder            Encoder
 	ClientCommandQueue map[net.Conn][]Command
 	CommandQueueLock   sync.Mutex
+	SubscriberChannels SubscriberChannels
 }
 
 type Option struct {
@@ -67,7 +68,7 @@ func (h *Handler) ParseOptions(cmd Command) []Option {
 	case "SET":
 		exOption := []byte("EX")
 		optionPortion := cmd.Args[2:]
-		for i := 0; i < len(optionPortion); i++ {
+		for i := range len(optionPortion) {
 			if bytes.Equal(optionPortion[i], exOption) {
 				ttl, _ := strconv.Atoi(string(optionPortion[i+1])) //TODO handle potential error
 				o := Option{Name: "EX", Arg: ttl}
@@ -325,4 +326,25 @@ func (h *Handler) HandlePsyncCommand(cmd Command, localReplID string, localReplO
 		needsFullResync := true
 		return h.Encoder.GenerateFullResyncResp(localReplID, localReplOffset), needsFullResync
 	}
+}
+
+// Pub Sub Commands
+func (h *Handler) HandleSubscribeCommand(cmd Command, conn net.Conn) {
+	numChannelsIn := h.getNumberOfSubscribedChannels(conn)
+
+	for _, chanName := range cmd.Args {
+		stringName := string(chanName)
+		exists := h.SubscriberChannels.AddSubscriber(conn, stringName)
+		if !exists {
+			numChannelsIn++
+			subscribeMsg := SubscribeMessage{ChanName: chanName, CurrNumChannels: numChannelsIn}
+			msg := h.Encoder.GenerateSubscribeMessage(subscribeMsg)
+			h.SubscriberChannels.PublishMessage(msg, stringName)
+		}
+	}
+
+}
+
+func (h *Handler) getNumberOfSubscribedChannels(conn net.Conn) uint64 {
+	return h.SubscriberChannels.GetNumSubscribedChan(conn)
 }
