@@ -10,6 +10,8 @@ import (
 	"time"
 )
 
+//TODO restrict commands for clients in subscribed mode -> track client state across client set
+
 // all functions pertaining to generic / master server
 
 type Server struct {
@@ -26,15 +28,15 @@ type Server struct {
 	commandBuffer  []byte //stores commands while RDB snapshot is being created
 	commandBacklog CommandBacklog
 
-	clientConnSet *SafeMap[net.Conn, bool]
-	replPortMap   *SafeMap[string, net.Conn]
-	replicaMap    *SafeMap[net.Conn, uint64] //maps replicas to their offset
-	inProgReplSet *SafeMap[net.Conn, bool]
+	clientConnSet    *SafeMap[net.Conn, *ClientObject]
+	replPortMap      *SafeMap[string, net.Conn]
+	replicaOffsetMap *SafeMap[net.Conn, uint64] //maps replicas to their offset
+	inProgReplSet    *SafeMap[net.Conn, bool]
 
 	subscribeChannels *SafeMap[net.Conn, bool]
 
-	joinChan    chan (net.Conn)
-	leaveChan   chan (net.Conn)
+	joinChan    chan (*ClientObject)
+	leaveChan   chan (Node)
 	HandlerLock sync.RWMutex
 
 	Parser  *Parser
@@ -65,40 +67,42 @@ func (s *Server) StartServer() {
 			continue
 		}
 
-		s.joinChan <- conn
-		go s.HandleClientStream(conn)
+		c := &ClientObject{Conn: conn, InSubscribedMode: false, SubscribedChannels: make([]string, 0)}
+		s.joinChan <- c
+		go s.HandleClientStream(c)
 	}
 }
 
 func (s *Server) RegisterNewConnections() {
 	for c := range s.joinChan {
-		s.clientConnSet.UpsertKV(c, true)
+		s.clientConnSet.UpsertKV(c.Conn, c)
 	}
 }
 
 func (s *Server) DisconnectConnections() {
-	for c := range s.leaveChan {
-		c.Close()
+	for node := range s.leaveChan {
+		conn := node.GetConn()
+		conn.Close()
 
-		if ok := s.clientConnSet.DeleteKey(c); ok {
+		if ok := s.clientConnSet.DeleteKey(conn); ok {
 			slog.Info("A client has disconnected")
 		} else {
-			s.replicaMap.DeleteKey(c)
+			s.replicaOffsetMap.DeleteKey(conn)
 			slog.Info("A replica has disconnected")
 		}
 	}
 }
 
-func (s *Server) HandleClientStream(conn net.Conn) {
+func (s *Server) HandleClientStream(c *ClientObject) {
 	buf := make([]byte, 4096)
 	temp := make([]byte, 4096)
 
 	var singleCommand []byte
 
 	for {
-		n, err := conn.Read(temp)
+		n, err := c.Conn.Read(temp)
 		if err != nil {
-			s.leaveChan <- conn
+			s.leaveChan <- c
 			return
 		}
 
@@ -114,7 +118,7 @@ func (s *Server) HandleClientStream(conn net.Conn) {
 
 		isAtomic := false
 
-		resp := s.HandleParsedCommands(cmd, isAtomic, conn)
+		resp := s.HandleParsedCommands(cmd, isAtomic, c.Conn)
 
 		if s.IsWriteCommand(cmd.Name) {
 			//increment replica offset
@@ -130,22 +134,23 @@ func (s *Server) HandleClientStream(conn net.Conn) {
 			go s.StreamCommandToReplicas(singleCommand)
 
 			if cmd.Name == "WAIT" {
-				//TODO handle Wait command logic here
+				//handle WAIT command logic
 				resp = s.WaitForReplicas(cmd)
 			}
 		}
 
-		conn.Write(resp)
+		c.Conn.Write(resp)
 
 		if cmd.Name == "MULTI" {
 			//enter transaction mode for this client
-			s.HandleClientTransaction(conn)
+			s.HandleClientTransaction(c)
 		}
+
 	}
 }
 
 func (s *Server) WaitForReplicas(cmd Command) []byte {
-	if s.replicaMap.GetLen() == 0 {
+	if s.replicaOffsetMap.GetLen() == 0 {
 		return s.Handler.Encoder.GenerateInt(0)
 	}
 
@@ -176,7 +181,7 @@ func (s *Server) WaitForReplicas(cmd Command) []byte {
 			}
 		}
 
-		for _, item := range s.replicaMap.GetItems() {
+		for _, item := range s.replicaOffsetMap.GetItems() {
 			go func() {
 				conn := item[0].(net.Conn)
 				offset := item[1].(uint64)
@@ -191,15 +196,15 @@ func (s *Server) WaitForReplicas(cmd Command) []byte {
 	}
 }
 
-func (s *Server) HandleClientTransaction(conn net.Conn) {
+func (s *Server) HandleClientTransaction(c *ClientObject) {
 	buf := make([]byte, 4096)
 	temp := make([]byte, 4096)
 
 	for {
-		n, err := conn.Read(temp)
+		n, err := c.Conn.Read(temp)
 		if err != nil {
 			slog.Error(err.Error())
-			s.leaveChan <- conn
+			s.leaveChan <- c
 			return
 		}
 
@@ -214,18 +219,18 @@ func (s *Server) HandleClientTransaction(conn net.Conn) {
 
 		switch cmd.Name {
 		case "EXEC":
-			s.ExecuteTransaction(conn)
+			s.ExecuteTransaction(c.Conn)
 			return
 		case "DISCARD":
-			resp := s.Handler.DiscardCommandQueue(conn)
-			conn.Write(resp)
+			resp := s.Handler.DiscardCommandQueue(c.Conn)
+			c.Conn.Write(resp)
 			return
 		case "MULTI":
 			resp := s.Handler.Encoder.GenerateSimpleError("ERR cannot nest MULTI commands")
-			conn.Write(resp)
+			c.Conn.Write(resp)
 		default:
-			resp := s.Handler.QueueCommand(cmd, conn)
-			conn.Write(resp)
+			resp := s.Handler.QueueCommand(cmd, c.Conn)
+			c.Conn.Write(resp)
 		}
 	}
 }
@@ -250,6 +255,19 @@ func (s *Server) ExecuteTransaction(conn net.Conn) {
 		resp := s.Handler.Encoder.GenerateArray(results, isForTransaction) //isForTransaction needed for some formatting input for encoder
 		conn.Write(resp)
 	}
+}
+
+func (s *Server) HandleSubscribedClientCommands(cmd Command) []byte {
+	var response []byte
+
+	switch cmd.Name {
+	case "SUBSCRIBE":
+	case "PING":
+	case "UNSUBSCRIBE":
+	case "PUBLISH":
+	}
+
+	return response
 }
 
 func (s *Server) HandleParsedCommands(cmd Command, isAtomic bool, conn net.Conn) []byte {
@@ -318,7 +336,7 @@ func (s *Server) HandleParsedCommands(cmd Command, isAtomic bool, conn net.Conn)
 }
 
 func (s *Server) StreamCommandToReplicas(commandBytes []byte) {
-	replicaConns := s.replicaMap.GetKeys()
+	replicaConns := s.replicaOffsetMap.GetKeys()
 	for _, conn := range replicaConns {
 		go func() {
 			conn.Write(commandBytes)
@@ -460,20 +478,19 @@ func (s *Server) HandleReplicaConfig(kvPair []string, conn net.Conn) {
 	case "listening-port":
 		s.replPortMap.UpsertKV(kvPair[1], conn)
 		slog.Info("registered a new replica port", "port", kvPair[1])
-
 		conn.Write(s.Handler.Encoder.GetSimpleStringOk()) //reply to the replica's REPLCONF msg
 
 		ok := s.EstablishReplica(conn)
 		if ok {
 			//at this point the connection is a fully established replica, thus we can begin streaming all our write commands to it
-			s.replicaMap.UpsertKV(conn, s.ReplicationOffset)
+			s.replicaOffsetMap.UpsertKV(conn, s.ReplicationOffset)
 			s.clientConnSet.DeleteKey(conn)
 			slog.Info("New replica registered!", "conn", conn)
 			// go s.AcceptOffsetAcks(conn)
 		}
 	case "ACK":
 		replicaOffset, _ := strconv.Atoi(string(kvPair[1]))
-		s.replicaMap.UpsertKV(conn, uint64(replicaOffset))
+		s.replicaOffsetMap.UpsertKV(conn, uint64(replicaOffset))
 	}
 }
 
