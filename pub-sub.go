@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"net"
 	"sync"
 )
@@ -21,6 +22,7 @@ func NewChannel() *Channel {
 // also returns true or false depending on if client
 // was ALREADY subscribed to channel
 func (c *Channel) AddSubscriber(conn net.Conn) bool {
+	fmt.Println(conn)
 	if exists := c.CheckMembership(conn); exists {
 		return true
 	}
@@ -49,10 +51,15 @@ func (c *Channel) PublishMessage(msg []byte) {
 	defer c.mtx.RUnlock()
 
 	for conn := range c.subscribers {
+		// fmt.Println(string(msg))
 		go func() {
 			conn.Write(msg)
 		}() // execute in go func to not wait on any slow clients
 	}
+}
+
+func (c *Channel) PublishDirectMessage(msg []byte, conn net.Conn) {
+	conn.Write(msg)
 }
 
 func (c *Channel) CheckMembership(conn net.Conn) bool {
@@ -90,6 +97,15 @@ func (s *SubscriberChannels) PublishMessage(msg []byte, chanName string) {
 	}
 
 	channel.PublishMessage(msg)
+}
+
+func (s *SubscriberChannels) PublishDirectMessage(msg []byte, chanName string, conn net.Conn) {
+	channel, ok := s.Channels[chanName]
+	if !ok {
+		return
+	}
+
+	channel.PublishDirectMessage(msg, conn)
 }
 
 func (s *SubscriberChannels) GetNumSubscribedChan(conn net.Conn) uint64 {

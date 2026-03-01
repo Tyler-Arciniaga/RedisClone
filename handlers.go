@@ -339,7 +339,7 @@ func (h *Handler) HandleSubscribeCommand(cmd Command, conn net.Conn) uint64 {
 			numChannelsIn++
 			subscribeMsg := SubscribeMessage{ChanName: chanName, CurrNumChannels: numChannelsIn}
 			msg := h.Encoder.GenerateSubscribeMessage(subscribeMsg)
-			h.SubscriberChannels.PublishMessage(msg, stringName)
+			h.SubscriberChannels.PublishDirectMessage(msg, stringName, conn)
 		}
 	}
 
@@ -358,4 +358,17 @@ func (h *Handler) HandleSubscribedPingCommand(cmd Command) []byte {
 
 	array := [][]byte{[]byte("PONG"), arg}
 	return h.Encoder.GenerateArray(array, false)
+}
+
+func (h *Handler) HandlePublishCommand(cmd Command) []byte {
+	if len(cmd.Args) != 2 {
+		return h.Encoder.GenerateSimpleError("ERR must specify channel and message for PUBLISH command")
+	}
+
+	chanName := cmd.Args[0]
+	msg := cmd.Args[1]
+
+	h.SubscriberChannels.PublishMessage(msg, string(chanName))
+
+	return nil
 }
