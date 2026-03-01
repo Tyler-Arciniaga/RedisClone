@@ -366,8 +366,10 @@ func (h *Handler) HandlePublishCommand(cmd Command) []byte {
 	}
 
 	chanName := cmd.Args[0]
-	msg := cmd.Args[1]
+	payload := cmd.Args[1]
+	array := [][]byte{[]byte("message"), chanName, payload}
 
+	msg := h.Encoder.GenerateArray(array, false)
 	h.SubscriberChannels.PublishMessage(msg, string(chanName))
 
 	return nil

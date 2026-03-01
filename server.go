@@ -270,6 +270,7 @@ func (s *Server) HandleSubscribedClientCommands(cmd Command) []byte {
 		response = s.Handler.HandleSubscribedPingCommand(cmd)
 	case "UNSUBSCRIBE":
 	case "PUBLISH":
+		response = s.Handler.HandlePublishCommand(cmd)
 	}
 
 	return response
@@ -309,9 +310,6 @@ func (s *Server) HandleParsedCommands(cmd Command, isAtomic bool, conn net.Conn)
 		numChans := s.Handler.HandleSubscribeCommand(cmd, conn)
 		client, _ := s.clientConnSet.GetValue(conn)
 		client.NumSubscribedChannels = numChans
-		s.clientConnSet.UpsertKV(conn, client)
-	case "PUBLISH":
-		//TODO
 
 	//commands that do change local data
 	case "SET":
