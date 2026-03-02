@@ -350,20 +350,32 @@ func (h *Handler) HandleUnsubscribeCommand(cmd Command, conn net.Conn) uint64 {
 	numChannelsIn := h.getNumberOfSubscribedChannels(conn)
 
 	if len(cmd.Args) == 0 {
-		h.SubscriberChannels.RemoveSubscriberAll(conn)
+		for chanName := range h.SubscriberChannels.Channels {
+			h.unsubscribeFromChannel(&numChannelsIn, conn, chanName)
+		}
 	} else {
 		for _, chanName := range cmd.Args {
 			stringName := string(chanName)
-			if exists := h.SubscriberChannels.RemoveSubscriber(conn, stringName); exists {
-				numChannelsIn--
-				unsubscribeMsg := SubscriptionMessage{IsSubscribeMessage: false, ChanName: chanName, CurrNumChannels: numChannelsIn}
-				msg := h.Encoder.GenerateSubscriptionMessage(unsubscribeMsg)
-				h.SubscriberChannels.PublishDirectMessage(msg, stringName, conn)
-			}
+			h.unsubscribeFromChannel(&numChannelsIn, conn, stringName)
+			// if exists := h.SubscriberChannels.RemoveSubscriber(conn, stringName); exists {
+			// 	numChannelsIn--
+			// 	unsubscribeMsg := SubscriptionMessage{IsSubscribeMessage: false, ChanName: chanName, CurrNumChannels: numChannelsIn}
+			// 	msg := h.Encoder.GenerateSubscriptionMessage(unsubscribeMsg)
+			// 	h.SubscriberChannels.PublishDirectMessage(msg, stringName, conn)
+			// }
 		}
 	}
 
 	return numChannelsIn
+}
+
+func (h *Handler) unsubscribeFromChannel(numChannelsIn *uint64, conn net.Conn, chanName string) {
+	if exists := h.SubscriberChannels.RemoveSubscriber(conn, chanName); exists {
+		*numChannelsIn--
+		unsubscribeMsg := SubscriptionMessage{IsSubscribeMessage: false, ChanName: []byte(chanName), CurrNumChannels: *numChannelsIn}
+		msg := h.Encoder.GenerateSubscriptionMessage(unsubscribeMsg)
+		h.SubscriberChannels.PublishDirectMessage(msg, chanName, conn)
+	}
 }
 
 func (h *Handler) getNumberOfSubscribedChannels(conn net.Conn) uint64 {

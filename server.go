@@ -268,15 +268,15 @@ func (s *Server) HandleSubscribedClientCommands(cmd Command, conn net.Conn) []by
 	case "SUBSCRIBE":
 		numChans := s.Handler.HandleSubscribeCommand(cmd, conn)
 		client, _ := s.clientConnSet.GetValue(conn)
-		fmt.Println("yyz", client.NumSubscribedChannels)
 		client.NumSubscribedChannels = numChans
 	case "PING":
 		response = s.Handler.HandleSubscribedPingCommand(cmd)
 	case "UNSUBSCRIBE":
 		numChans := s.Handler.HandleUnsubscribeCommand(cmd, conn)
 		client, _ := s.clientConnSet.GetValue(conn)
-		fmt.Println("yyz", client.NumSubscribedChannels)
 		client.NumSubscribedChannels = numChans
+	default:
+		response = s.Handler.Encoder.GenerateSimpleError(fmt.Sprintf("ERR unknown command '%s' while in subscribed mode", cmd.Name))
 	}
 
 	return response
