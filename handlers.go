@@ -354,8 +354,7 @@ func (h *Handler) HandleUnsubscribeCommand(cmd Command, conn net.Conn) uint64 {
 	} else {
 		for _, chanName := range cmd.Args {
 			stringName := string(chanName)
-			exists := h.SubscriberChannels.CheckMembership(conn, stringName)
-			if exists {
+			if exists := h.SubscriberChannels.RemoveSubscriber(conn, stringName); exists {
 				numChannelsIn--
 				unsubscribeMsg := SubscriptionMessage{IsSubscribeMessage: false, ChanName: chanName, CurrNumChannels: numChannelsIn}
 				msg := h.Encoder.GenerateSubscriptionMessage(unsubscribeMsg)

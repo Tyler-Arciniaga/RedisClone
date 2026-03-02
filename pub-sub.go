@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"net"
 	"sync"
 )
@@ -22,7 +21,6 @@ func NewChannel() *Channel {
 // also returns true or false depending on if client
 // was ALREADY subscribed to channel
 func (c *Channel) AddSubscriber(conn net.Conn) bool {
-	fmt.Println(conn)
 	if exists := c.CheckMembership(conn); exists {
 		return true
 	}
@@ -92,13 +90,14 @@ func (s *SubscriberChannels) AddSubscriber(conn net.Conn, chanName string) bool 
 	return channel.AddSubscriber(conn)
 }
 
-func (s *SubscriberChannels) RemoveSubscriber(conn net.Conn, chanName string) {
+// returns bool representing if conn was a member of the channel
+func (s *SubscriberChannels) RemoveSubscriber(conn net.Conn, chanName string) bool {
 	channel, ok := s.Channels[chanName]
 	if !ok {
-		return
+		return false
 	}
 
-	channel.RemoveSubscriber(conn)
+	return channel.RemoveSubscriber(conn)
 }
 
 func (s *SubscriberChannels) RemoveSubscriberAll(conn net.Conn) {
