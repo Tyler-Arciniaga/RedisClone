@@ -118,7 +118,8 @@ type PsyncResponse struct {
 }
 
 // Pub Sub Structs
-type SubscribeMessage struct {
-	ChanName        []byte
-	CurrNumChannels uint64
+type SubscriptionMessage struct {
+	IsSubscribeMessage bool
+	ChanName           []byte
+	CurrNumChannels    uint64
 }

@@ -337,9 +337,30 @@ func (h *Handler) HandleSubscribeCommand(cmd Command, conn net.Conn) uint64 {
 		exists := h.SubscriberChannels.AddSubscriber(conn, stringName)
 		if !exists {
 			numChannelsIn++
-			subscribeMsg := SubscribeMessage{ChanName: chanName, CurrNumChannels: numChannelsIn}
-			msg := h.Encoder.GenerateSubscribeMessage(subscribeMsg)
+			subscribeMsg := SubscriptionMessage{IsSubscribeMessage: true, ChanName: chanName, CurrNumChannels: numChannelsIn}
+			msg := h.Encoder.GenerateSubscriptionMessage(subscribeMsg)
 			h.SubscriberChannels.PublishDirectMessage(msg, stringName, conn)
+		}
+	}
+
+	return numChannelsIn
+}
+
+func (h *Handler) HandleUnsubscribeCommand(cmd Command, conn net.Conn) uint64 {
+	numChannelsIn := h.getNumberOfSubscribedChannels(conn)
+
+	if len(cmd.Args) == 0 {
+		h.SubscriberChannels.RemoveSubscriberAll(conn)
+	} else {
+		for _, chanName := range cmd.Args {
+			stringName := string(chanName)
+			exists := h.SubscriberChannels.CheckMembership(conn, stringName)
+			if exists {
+				numChannelsIn--
+				unsubscribeMsg := SubscriptionMessage{IsSubscribeMessage: false, ChanName: chanName, CurrNumChannels: numChannelsIn}
+				msg := h.Encoder.GenerateSubscriptionMessage(unsubscribeMsg)
+				h.SubscriberChannels.PublishDirectMessage(msg, stringName, conn)
+			}
 		}
 	}
 
@@ -370,7 +391,7 @@ func (h *Handler) HandlePublishCommand(cmd Command) []byte {
 	array := [][]byte{[]byte("message"), chanName, payload}
 
 	msg := h.Encoder.GenerateArray(array, false)
-	h.SubscriberChannels.PublishMessage(msg, string(chanName))
+	numRecieved := h.SubscriberChannels.PublishMessage(msg, string(chanName))
 
-	return nil
+	return h.Encoder.GenerateInt(int(numRecieved))
 }

@@ -46,7 +46,7 @@ func (c *Channel) RemoveSubscriber(conn net.Conn) bool {
 	return ok
 }
 
-func (c *Channel) PublishMessage(msg []byte) {
+func (c *Channel) PublishMessage(msg []byte) uint64 {
 	c.mtx.RLock()
 	defer c.mtx.RUnlock()
 
@@ -56,6 +56,8 @@ func (c *Channel) PublishMessage(msg []byte) {
 			conn.Write(msg)
 		}() // execute in go func to not wait on any slow clients
 	}
+
+	return uint64(len(c.subscribers))
 }
 
 func (c *Channel) PublishDirectMessage(msg []byte, conn net.Conn) {
@@ -69,6 +71,15 @@ func (c *Channel) CheckMembership(conn net.Conn) bool {
 	_, ok := c.subscribers[conn]
 
 	return ok
+}
+
+func (s *SubscriberChannels) CheckMembership(conn net.Conn, chanName string) bool {
+	channel, ok := s.Channels[chanName]
+	if !ok {
+		return false
+	} // channel doesn't exist
+
+	return channel.CheckMembership(conn)
 }
 
 func (s *SubscriberChannels) AddSubscriber(conn net.Conn, chanName string) bool {
@@ -90,13 +101,19 @@ func (s *SubscriberChannels) RemoveSubscriber(conn net.Conn, chanName string) {
 	channel.RemoveSubscriber(conn)
 }
 
-func (s *SubscriberChannels) PublishMessage(msg []byte, chanName string) {
+func (s *SubscriberChannels) RemoveSubscriberAll(conn net.Conn) {
+	for _, channel := range s.Channels {
+		channel.RemoveSubscriber(conn)
+	}
+}
+
+func (s *SubscriberChannels) PublishMessage(msg []byte, chanName string) uint64 {
 	channel, ok := s.Channels[chanName]
 	if !ok {
-		return
+		return 0
 	}
 
-	channel.PublishMessage(msg)
+	return channel.PublishMessage(msg)
 }
 
 func (s *SubscriberChannels) PublishDirectMessage(msg []byte, chanName string, conn net.Conn) {

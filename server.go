@@ -119,7 +119,7 @@ func (s *Server) HandleClientStream(c *ClientObject) {
 		isAtomic := false
 
 		if c.NumSubscribedChannels > 0 {
-			resp = s.HandleSubscribedClientCommands(cmd)
+			resp = s.HandleSubscribedClientCommands(cmd, c.Conn)
 		} else {
 			resp = s.HandleParsedCommands(cmd, isAtomic, c.Conn)
 		}
@@ -261,16 +261,22 @@ func (s *Server) ExecuteTransaction(conn net.Conn) {
 	}
 }
 
-func (s *Server) HandleSubscribedClientCommands(cmd Command) []byte {
+func (s *Server) HandleSubscribedClientCommands(cmd Command, conn net.Conn) []byte {
 	var response []byte
 
 	switch cmd.Name {
 	case "SUBSCRIBE":
+		numChans := s.Handler.HandleSubscribeCommand(cmd, conn)
+		client, _ := s.clientConnSet.GetValue(conn)
+		fmt.Println("yyz", client.NumSubscribedChannels)
+		client.NumSubscribedChannels = numChans
 	case "PING":
 		response = s.Handler.HandleSubscribedPingCommand(cmd)
 	case "UNSUBSCRIBE":
-	case "PUBLISH":
-		response = s.Handler.HandlePublishCommand(cmd)
+		numChans := s.Handler.HandleUnsubscribeCommand(cmd, conn)
+		client, _ := s.clientConnSet.GetValue(conn)
+		fmt.Println("yyz", client.NumSubscribedChannels)
+		client.NumSubscribedChannels = numChans
 	}
 
 	return response
@@ -310,6 +316,8 @@ func (s *Server) HandleParsedCommands(cmd Command, isAtomic bool, conn net.Conn)
 		numChans := s.Handler.HandleSubscribeCommand(cmd, conn)
 		client, _ := s.clientConnSet.GetValue(conn)
 		client.NumSubscribedChannels = numChans
+	case "PUBLISH":
+		response = s.Handler.HandlePublishCommand(cmd)
 
 	//commands that do change local data
 	case "SET":
