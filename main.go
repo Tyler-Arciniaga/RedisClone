@@ -11,11 +11,11 @@ import (
 func main() {
 	port := HandleCommandArgs()
 	store := Store{store: make(map[string]RedisObject), listClientQueue: make(map[string]*list.List)}
-	handler := Handler{Store: &store, ClientCommandQueue: make(map[net.Conn][]Command)}
+	handler := Handler{Store: &store, ClientCommandQueue: make(map[net.Conn][]Command), SubscriberChannels: SubscriberChannels{Channels: make(map[string]*Channel)}}
 
 	commandBacklog := CommandBacklog{capacity: 100, size: 0, writeHead: 0, backlogStart: 0, Backlog: make([]byte, 100)}
 
-	clientConnSet := NewSafeMap[net.Conn, bool]()
+	clientConnSet := NewSafeMap[net.Conn, *ClientObject]()
 	replicaPortMap := NewSafeMap[string, net.Conn]()
 	replicaMap := NewSafeMap[net.Conn, uint64]()
 	inProgReplicaMap := NewSafeMap[net.Conn, bool]()
@@ -34,13 +34,13 @@ func main() {
 		commandBuffer:  []byte{},
 		commandBacklog: commandBacklog,
 
-		clientConnSet: clientConnSet,
-		replPortMap:   replicaPortMap,
-		replicaMap:    replicaMap,
-		inProgReplSet: inProgReplicaMap,
+		clientConnSet:    clientConnSet,
+		replPortMap:      replicaPortMap,
+		replicaOffsetMap: replicaMap,
+		inProgReplSet:    inProgReplicaMap,
 
-		joinChan:    make(chan net.Conn),
-		leaveChan:   make(chan net.Conn),
+		joinChan:    make(chan *ClientObject),
+		leaveChan:   make(chan Node),
 		HandlerLock: sync.RWMutex{},
 
 		Parser:  &Parser{},

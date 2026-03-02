@@ -15,6 +15,7 @@ type Handler struct {
 	Encoder            Encoder
 	ClientCommandQueue map[net.Conn][]Command
 	CommandQueueLock   sync.Mutex
+	SubscriberChannels SubscriberChannels
 }
 
 type Option struct {
@@ -67,7 +68,7 @@ func (h *Handler) ParseOptions(cmd Command) []Option {
 	case "SET":
 		exOption := []byte("EX")
 		optionPortion := cmd.Args[2:]
-		for i := 0; i < len(optionPortion); i++ {
+		for i := range len(optionPortion) {
 			if bytes.Equal(optionPortion[i], exOption) {
 				ttl, _ := strconv.Atoi(string(optionPortion[i+1])) //TODO handle potential error
 				o := Option{Name: "EX", Arg: ttl}
@@ -325,4 +326,83 @@ func (h *Handler) HandlePsyncCommand(cmd Command, localReplID string, localReplO
 		needsFullResync := true
 		return h.Encoder.GenerateFullResyncResp(localReplID, localReplOffset), needsFullResync
 	}
+}
+
+// Pub Sub Commands
+func (h *Handler) HandleSubscribeCommand(cmd Command, conn net.Conn) uint64 {
+	numChannelsIn := h.getNumberOfSubscribedChannels(conn)
+
+	for _, chanName := range cmd.Args {
+		stringName := string(chanName)
+		exists := h.SubscriberChannels.AddSubscriber(conn, stringName)
+		if !exists {
+			numChannelsIn++
+			subscribeMsg := SubscriptionMessage{IsSubscribeMessage: true, ChanName: chanName, CurrNumChannels: numChannelsIn}
+			msg := h.Encoder.GenerateSubscriptionMessage(subscribeMsg)
+			h.SubscriberChannels.PublishDirectMessage(msg, stringName, conn)
+		}
+	}
+
+	return numChannelsIn
+}
+
+func (h *Handler) HandleUnsubscribeCommand(cmd Command, conn net.Conn) uint64 {
+	numChannelsIn := h.getNumberOfSubscribedChannels(conn)
+
+	if len(cmd.Args) == 0 {
+		for chanName := range h.SubscriberChannels.Channels {
+			h.unsubscribeFromChannel(&numChannelsIn, conn, chanName)
+		}
+	} else {
+		for _, chanName := range cmd.Args {
+			stringName := string(chanName)
+			h.unsubscribeFromChannel(&numChannelsIn, conn, stringName)
+			// if exists := h.SubscriberChannels.RemoveSubscriber(conn, stringName); exists {
+			// 	numChannelsIn--
+			// 	unsubscribeMsg := SubscriptionMessage{IsSubscribeMessage: false, ChanName: chanName, CurrNumChannels: numChannelsIn}
+			// 	msg := h.Encoder.GenerateSubscriptionMessage(unsubscribeMsg)
+			// 	h.SubscriberChannels.PublishDirectMessage(msg, stringName, conn)
+			// }
+		}
+	}
+
+	return numChannelsIn
+}
+
+func (h *Handler) unsubscribeFromChannel(numChannelsIn *uint64, conn net.Conn, chanName string) {
+	if exists := h.SubscriberChannels.RemoveSubscriber(conn, chanName); exists {
+		*numChannelsIn--
+		unsubscribeMsg := SubscriptionMessage{IsSubscribeMessage: false, ChanName: []byte(chanName), CurrNumChannels: *numChannelsIn}
+		msg := h.Encoder.GenerateSubscriptionMessage(unsubscribeMsg)
+		h.SubscriberChannels.PublishDirectMessage(msg, chanName, conn)
+	}
+}
+
+func (h *Handler) getNumberOfSubscribedChannels(conn net.Conn) uint64 {
+	return h.SubscriberChannels.GetNumSubscribedChan(conn)
+}
+
+func (h *Handler) HandleSubscribedPingCommand(cmd Command) []byte {
+	arg := []byte("")
+	if len(cmd.Args) > 0 {
+		arg = cmd.Args[0]
+	}
+
+	array := [][]byte{[]byte("PONG"), arg}
+	return h.Encoder.GenerateArray(array, false)
+}
+
+func (h *Handler) HandlePublishCommand(cmd Command) []byte {
+	if len(cmd.Args) != 2 {
+		return h.Encoder.GenerateSimpleError("ERR must specify channel and message for PUBLISH command")
+	}
+
+	chanName := cmd.Args[0]
+	payload := cmd.Args[1]
+	array := [][]byte{[]byte("message"), chanName, payload}
+
+	msg := h.Encoder.GenerateArray(array, false)
+	numRecieved := h.SubscriberChannels.PublishMessage(msg, string(chanName))
+
+	return h.Encoder.GenerateInt(int(numRecieved))
 }

@@ -2,9 +2,33 @@ package main
 
 import (
 	"container/list"
+	"net"
 	"time"
 )
 
+// non-main-server Structs
+type Node interface {
+	GetConn() net.Conn
+}
+
+type ClientObject struct {
+	Conn                  net.Conn
+	NumSubscribedChannels uint64
+}
+
+type ReplicaObject struct {
+	Conn net.Conn
+}
+
+func (c *ClientObject) GetConn() net.Conn {
+	return c.Conn
+}
+
+func (r *ReplicaObject) GetConn() net.Conn {
+	return r.Conn
+}
+
+// Store Structs
 type RedisObject struct {
 	NativeType NativeType
 	Data       any
@@ -74,7 +98,7 @@ type Waiter struct {
 	CleanUpPointers map[string]*list.Element
 }
 
-// Replication structs
+// Replication Structs
 type InfoRequest struct {
 	hasServer      bool
 	hasClient      bool
@@ -91,4 +115,11 @@ type PsyncResponse struct {
 	isPartialResync bool
 	masterID        string
 	masterOffset    uint64
+}
+
+// Pub Sub Structs
+type SubscriptionMessage struct {
+	IsSubscribeMessage bool
+	ChanName           []byte
+	CurrNumChannels    uint64
 }
