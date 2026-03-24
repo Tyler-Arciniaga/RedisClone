@@ -357,12 +357,6 @@ func (h *Handler) HandleUnsubscribeCommand(cmd Command, conn net.Conn) uint64 {
 		for _, chanName := range cmd.Args {
 			stringName := string(chanName)
 			h.unsubscribeFromChannel(&numChannelsIn, conn, stringName)
-			// if exists := h.SubscriberChannels.RemoveSubscriber(conn, stringName); exists {
-			// 	numChannelsIn--
-			// 	unsubscribeMsg := SubscriptionMessage{IsSubscribeMessage: false, ChanName: chanName, CurrNumChannels: numChannelsIn}
-			// 	msg := h.Encoder.GenerateSubscriptionMessage(unsubscribeMsg)
-			// 	h.SubscriberChannels.PublishDirectMessage(msg, stringName, conn)
-			// }
 		}
 	}
 
@@ -405,4 +399,9 @@ func (h *Handler) HandlePublishCommand(cmd Command) []byte {
 	numRecieved := h.SubscriberChannels.PublishMessage(msg, string(chanName))
 
 	return h.Encoder.GenerateInt(int(numRecieved))
+}
+
+// Sorted Sets (ZSets) Commands
+func (h *Handler) HandleZAddCommand(cmd Command) []byte {
+	return nil
 }
