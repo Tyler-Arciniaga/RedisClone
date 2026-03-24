@@ -57,24 +57,49 @@ func (s *SkipList) AddNode(member string, score float64) {
 	newNode := slNode{Member: member, Score: score}
 	startNode := s.SearchByNode(member, score)
 
-	endNode := startNode.RightNei
-	newNode.LeftNei = startNode
-	newNode.RightNei = endNode
-	startNode.RightNei = &newNode
-	endNode.LeftNei = &newNode
+	s.InsertNode(startNode, &newNode)
 
 	for FlipCoin() {
 		aboveNode := slNode{Member: member, Score: score}
 		newNode.TopNei = &aboveNode
 		aboveNode.BottomNei = &newNode
 
-		for startNode.TopNei == nil {
+		for startNode.TopNei == nil && startNode.LeftNei != nil {
 			startNode = startNode.LeftNei
-		}
+		} // continue moving the start node back until it either reaches a node with a reference to the above level, or becomes the -inf node (therefore need to add a completely new level)
 
+		if startNode.LeftNei == nil {
+			// startNode has reached the -inf node for this level ... need to create new top level
+			startNode.TopNei = s.CreateUpperLevel(startNode)
+		}
 		startNode = startNode.TopNei
-		newNode = *newNode.TopNei
+		newNode = aboveNode
+
+		s.InsertNode(startNode, &newNode)
 	} // probabilistic 50% chance of adding node to above level
+}
+
+// insert node after previous node, correctly altering references of the two nodes it is inserted between
+func (s *SkipList) InsertNode(prevNode, newNode *slNode) {
+	endNode := prevNode.RightNei
+
+	newNode.LeftNei = prevNode
+	newNode.RightNei = endNode
+	prevNode.RightNei = newNode
+	endNode.LeftNei = newNode
+}
+
+// create new skip list level and have its left bound reference the current left bound, return ptr to new left bound
+func (s *SkipList) CreateUpperLevel(currLeftBound *slNode) *slNode {
+	newLeftBound := &slNode{Score: math.Inf(-1)}
+	newRightBound := &slNode{Score: math.Inf(1)}
+
+	newLeftBound.RightNei = newRightBound
+	newRightBound.LeftNei = newLeftBound
+
+	newLeftBound.BottomNei = currLeftBound
+
+	return newLeftBound
 }
 
 func (s *SkipList) SearchByScore(score float64) *slNode {
