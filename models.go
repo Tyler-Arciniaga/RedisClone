@@ -40,6 +40,7 @@ const (
 	Bytes NativeType = iota
 	List
 	Stream
+	Z_Set
 	None
 )
 
@@ -122,4 +123,14 @@ type SubscriptionMessage struct {
 	IsSubscribeMessage bool
 	ChanName           []byte
 	CurrNumChannels    uint64
+}
+
+// ZSet Structs
+type MemberPair struct {
+	Member string
+	Score  float64
+}
+type ZSetModificationRequest struct {
+	Key     string
+	Members []MemberPair
 }

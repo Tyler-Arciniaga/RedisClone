@@ -403,5 +403,32 @@ func (h *Handler) HandlePublishCommand(cmd Command) []byte {
 
 // Sorted Sets (ZSets) Commands
 func (h *Handler) HandleZAddCommand(cmd Command) []byte {
-	return nil
+	if len(cmd.Args) < 3 {
+		return h.Encoder.GenerateSimpleError("ERR must specify at zset name and at least one member and score")
+	}
+
+	if len(cmd.Args)%2 == 0 {
+		return h.Encoder.GenerateSimpleError("ERR make sure that each specified ZSet member has a score and vice versa")
+	}
+
+	key := string(cmd.Args[0])
+	var members []MemberPair
+
+	for i := 1; i < len(cmd.Args); i += 2 {
+		f, err := strconv.ParseFloat(string(cmd.Args[i+1]), 64)
+		if err != nil {
+			slog.Error("error parsing float64 for zset member pair", "err", err)
+			return h.Encoder.GenerateSimpleError("ERR parsing some float64")
+		}
+
+		m := MemberPair{Member: string(cmd.Args[i]), Score: f}
+		members = append(members, m)
+	}
+
+	numAdded, err := h.Store.ZSetAdd(ZSetModificationRequest{Key: key, Members: members})
+	if err != nil {
+		return h.Encoder.GenerateSimpleError(err.Error())
+	}
+
+	return h.Encoder.GenerateInt(numAdded)
 }

@@ -54,6 +54,44 @@ func (s *Store) GetAsList(key string) (ListData, bool, error) {
 	return list, true, nil
 }
 
+// Note: This function is unsafe, it should only ever be called by a function who holds a lock
+func (s *Store) GetAsZSet(key string) (ZSet, bool, error) {
+	obj, ok := s.store[key]
+	if !ok {
+		return ZSet{}, false, nil
+	}
+
+	zset, ok := obj.Data.(ZSet)
+	if obj.NativeType != Z_Set || !ok {
+		return ZSet{}, true, errors.New("WRONGTYPE Operation against a key holding the wrong kind of value")
+	}
+
+	return zset, true, nil
+}
+
+func (s *Store) ZSetAdd(r ZSetModificationRequest) (int, error) {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+
+	zs, ok, err := s.GetAsZSet(r.Key)
+	if !ok {
+		zs = ZSet{Hashmap: make(map[string]float64), SkipList: *NewSkipList()}
+	} else {
+		if err != nil {
+			return 0, err
+		}
+	}
+
+	for _, pair := range r.Members {
+		zs.ZAdd(pair.Member, pair.Score)
+	}
+
+	zs.SkipList.PrintList()
+
+	s.store[r.Key] = RedisObject{NativeType: Z_Set, Data: zs}
+	return len(r.Members), nil
+}
+
 func (s *Store) SetKeyVal(r SetRequest) (bool, error) {
 	s.lock.Lock()
 	defer s.lock.Unlock()
