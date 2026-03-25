@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"math"
 	"math/rand"
 )
@@ -26,13 +27,13 @@ type ZSet struct {
 
 // return true if A less than B, return False if B less than A (don't need to handle equal since set is unique)
 func ZMemberCmpr(memberA string, scoreA float64, memberB string, scoreB float64) bool {
-	if scoreA <= scoreB {
+	if scoreA < scoreB {
 		return true
 	} else if scoreB < scoreA {
 		return false
 	} else {
 		return memberA < memberB
-	}
+	} // don't need to check for memberA == memberB since this is a set and each member is unique
 }
 
 func NewSkipList() *SkipList {
@@ -54,15 +55,15 @@ func FlipCoin() bool {
 }
 
 func (s *SkipList) AddNode(member string, score float64) {
-	newNode := slNode{Member: member, Score: score}
+	newNode := &slNode{Member: member, Score: score}
 	startNode := s.SearchByNode(member, score)
 
-	s.InsertNode(startNode, &newNode)
+	s.InsertNode(startNode, newNode)
 
 	for FlipCoin() {
-		aboveNode := slNode{Member: member, Score: score}
-		newNode.TopNei = &aboveNode
-		aboveNode.BottomNei = &newNode
+		aboveNode := &slNode{Member: member, Score: score}
+		newNode.TopNei = aboveNode
+		aboveNode.BottomNei = newNode
 
 		for startNode.TopNei == nil && startNode.LeftNei != nil {
 			startNode = startNode.LeftNei
@@ -72,10 +73,11 @@ func (s *SkipList) AddNode(member string, score float64) {
 			// startNode has reached the -inf node for this level ... need to create new top level
 			startNode.TopNei = s.CreateUpperLevel(startNode)
 		}
+
 		startNode = startNode.TopNei
 		newNode = aboveNode
 
-		s.InsertNode(startNode, &newNode)
+		s.InsertNode(startNode, newNode)
 	} // probabilistic 50% chance of adding node to above level
 }
 
@@ -99,6 +101,7 @@ func (s *SkipList) CreateUpperLevel(currLeftBound *slNode) *slNode {
 
 	newLeftBound.BottomNei = currLeftBound
 
+	s.StartNode = newLeftBound
 	return newLeftBound
 }
 
@@ -120,18 +123,59 @@ func (s *SkipList) SearchByScore(score float64) *slNode {
 }
 
 func (s *SkipList) SearchByNode(member string, score float64) *slNode {
-	// currNode := s.StartNode
-	// for currNode.BottomNei != nil {
-	// 	currNode = currNode.BottomNei
-	// 	nextNode := currNode.RightNei
-	//
-	// 	for ZMemberCmpr(nextNode.Member, nextNode.Score, member, score) {
-	// 		// while nextNode is less than or equal to searchNode...
-	// 		currNode = nextNode
-	// 		nextNode = nextNode.RightNei
-	// 	}
-	// }
-	//
-	// return currNode
-	return nil
+	currNode := s.StartNode
+	nextNode := currNode.RightNei
+
+	for ZMemberCmpr(nextNode.Member, nextNode.Score, member, score) {
+		// while nextNode is less than or equal to searchNode...
+		currNode = nextNode
+		nextNode = nextNode.RightNei
+	}
+
+	for currNode.BottomNei != nil {
+		currNode = currNode.BottomNei
+		nextNode = currNode.RightNei
+
+		for ZMemberCmpr(nextNode.Member, nextNode.Score, member, score) {
+			// while nextNode is less than or equal to searchNode...
+			currNode = nextNode
+			nextNode = nextNode.RightNei
+		}
+	}
+
+	return currNode
+}
+
+func (s *SkipList) PrintList() {
+	currLeftBound := s.StartNode
+
+	for {
+		curr := currLeftBound
+		for {
+			fmt.Print(curr.Score, "->")
+			if curr.RightNei == nil {
+				break
+			}
+			curr = curr.RightNei
+		}
+
+		if currLeftBound.BottomNei == nil {
+			break
+		}
+		fmt.Print("\n")
+		currLeftBound = currLeftBound.BottomNei
+	}
+
+	fmt.Print("\n")
+}
+
+func TestSkipList() {
+	skipList := NewSkipList()
+
+	skipList.AddNode("a", 1)
+	skipList.AddNode("b", 5)
+	skipList.AddNode("c", 3)
+	skipList.AddNode("d", 2)
+
+	skipList.PrintList()
 }
