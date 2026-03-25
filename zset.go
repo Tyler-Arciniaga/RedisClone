@@ -24,8 +24,8 @@ func (n *slNode) PrintNode() {
 }
 
 func (zs *ZSet) ZAdd(m string, s float64) {
-	if _, ok := zs.Hashmap[m]; ok {
-		//TODO delete old skip list node (with old score)
+	if oldScore, ok := zs.Hashmap[m]; ok {
+		zs.SkipList.RemoveNode(m, oldScore)
 	}
 
 	zs.Hashmap[m] = s

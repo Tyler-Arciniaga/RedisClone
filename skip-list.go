@@ -6,6 +6,8 @@ import (
 	"math/rand"
 )
 
+//TODO implement max floor logic to never make time complexity worse that O(log n)
+
 type SkipList struct {
 	StartNode *slNode
 }
@@ -17,8 +19,8 @@ func ZMemberCmpr(memberA string, scoreA float64, memberB string, scoreB float64)
 	} else if scoreB < scoreA {
 		return false
 	} else {
-		return memberA < memberB
-	} // don't need to check for memberA == memberB since this is a set and each member is unique
+		return memberA <= memberB
+	}
 }
 
 func NewSkipList() *SkipList {
@@ -66,6 +68,20 @@ func (s *SkipList) AddNode(member string, score float64) {
 	} // probabilistic 50% chance of adding node to above level
 }
 
+func (s *SkipList) RemoveNode(member string, score float64) {
+	node := s.SearchByNode(member, score)
+	if node.Member != member {
+		return
+	}
+
+	s.RemoveNodeFromLevel(node) // remove node from bottom most level
+
+	for node.TopNei != nil {
+		node = node.TopNei
+		s.RemoveNodeFromLevel(node)
+	}
+}
+
 // insert node after previous node, correctly altering references of the two nodes it is inserted between
 func (s *SkipList) InsertNode(prevNode, newNode *slNode) {
 	endNode := prevNode.RightNei
@@ -74,6 +90,11 @@ func (s *SkipList) InsertNode(prevNode, newNode *slNode) {
 	newNode.RightNei = endNode
 	prevNode.RightNei = newNode
 	endNode.LeftNei = newNode
+}
+
+func (s *SkipList) RemoveNodeFromLevel(node *slNode) {
+	node.LeftNei.RightNei = node.RightNei
+	node.RightNei.LeftNei = node.LeftNei
 }
 
 // create new skip list level and have its left bound reference the current left bound, return ptr to new left bound
@@ -152,7 +173,7 @@ func (s *SkipList) PrintList() {
 		currLeftBound = currLeftBound.BottomNei
 	}
 
-	fmt.Print("\n")
+	fmt.Print("\n___________________________\n")
 }
 
 func TestSkipList() {
