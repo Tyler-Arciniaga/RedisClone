@@ -6,10 +6,22 @@ import (
 	"math/rand"
 )
 
-//TODO implement max floor logic to never make time complexity worse that O(log n)
-
 type SkipList struct {
 	StartNode *slNode
+}
+
+type slNode struct {
+	LeftNei   *slNode
+	RightNei  *slNode
+	TopNei    *slNode
+	BottomNei *slNode
+
+	Member string
+	Score  float64
+}
+
+func (n *slNode) PrintNode() {
+	fmt.Printf("(%s,%g) -> ", n.Member, n.Score)
 }
 
 // return true if A less than B, return False if B less than A (don't need to handle equal since set is unique)

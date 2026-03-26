@@ -432,3 +432,17 @@ func (h *Handler) HandleZAddCommand(cmd Command) []byte {
 
 	return h.Encoder.GenerateInt(numAdded)
 }
+
+func (h *Handler) HandleZCardCommand(cmd Command) []byte {
+	if len(cmd.Args) != 1 {
+		return h.Encoder.GenerateSimpleError("ERR ZCARD command expects only the key")
+	}
+
+	key := string(cmd.Args[0])
+	numMembers, err := h.Store.GetZSetCard(key)
+	if err != nil {
+		return h.Encoder.GenerateSimpleError(err.Error())
+	}
+
+	return h.Encoder.GenerateInt(numMembers)
+}

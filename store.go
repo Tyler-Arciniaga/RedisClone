@@ -75,7 +75,7 @@ func (s *Store) ZSetAdd(r ZSetModificationRequest) (int, error) {
 
 	zs, ok, err := s.GetAsZSet(r.Key)
 	if !ok {
-		zs = ZSet{Hashmap: make(map[string]float64), SkipList: *NewSkipList()}
+		zs = ZSet{Hashmap: make(map[string]float64), SkipList: *NewSkipList(), NumMembers: 0}
 	} else {
 		if err != nil {
 			return 0, err
@@ -93,6 +93,22 @@ func (s *Store) ZSetAdd(r ZSetModificationRequest) (int, error) {
 
 	s.store[r.Key] = RedisObject{NativeType: Z_Set, Data: zs}
 	return numNew, nil
+}
+
+func (s *Store) GetZSetCard(key string) (int, error) {
+	s.lock.RLock()
+	defer s.lock.RUnlock()
+
+	zs, ok, err := s.GetAsZSet(key)
+	if !ok {
+		return 0, nil
+	} else {
+		if err != nil {
+			return 0, err
+		}
+	}
+
+	return zs.NumMembers, nil
 }
 
 func (s *Store) SetKeyVal(r SetRequest) (bool, error) {

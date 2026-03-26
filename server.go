@@ -344,6 +344,8 @@ func (s *Server) HandleParsedCommands(cmd Command, isAtomic bool, conn net.Conn)
 		response = s.Handler.Encoder.GenerateSimpleError("ERR client is currently not in transaction mode, enter transaction mode with MULTI command")
 	case "ZADD":
 		response = s.Handler.HandleZAddCommand(cmd)
+	case "ZCARD":
+		response = s.Handler.HandleZCardCommand(cmd)
 	default:
 		response = s.Handler.Encoder.GenerateSimpleError(fmt.Sprintf("ERR unknown command '%s'", cmd.Name))
 	}
