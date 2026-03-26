@@ -24,3 +24,13 @@ func (zs *ZSet) ZAdd(m string, s float64) bool {
 
 	return isNew
 }
+
+func (zs *ZSet) ZRank(m string) (int, bool) {
+	score, ok := zs.Hashmap[m]
+	if !ok {
+		return 0, false // member does not exist in the set
+	}
+
+	node := zs.SkipList.SearchByNode(m, score)
+	return node.rank, true
+}

@@ -8,6 +8,7 @@ import (
 
 type SkipList struct {
 	StartNode *slNode
+	NumNodes  uint64
 }
 
 type slNode struct {
@@ -18,6 +19,8 @@ type slNode struct {
 
 	Member string
 	Score  float64
+	Span   uint64
+	rank   int // rank values may become stale, however, if they are ever considered we can assume they are up to date
 }
 
 func (n *slNode) PrintNode() {
@@ -36,7 +39,7 @@ func ZMemberCmpr(memberA string, scoreA float64, memberB string, scoreB float64)
 }
 
 func NewSkipList() *SkipList {
-	leftBound := slNode{Score: math.Inf(-1)}
+	leftBound := slNode{Score: math.Inf(-1), Span: 1, rank: -1}
 	rightBound := slNode{Score: math.Inf(1)}
 
 	leftBound.RightNei = &rightBound
@@ -56,11 +59,12 @@ func FlipCoin() bool {
 func (s *SkipList) AddNode(member string, score float64) {
 	newNode := &slNode{Member: member, Score: score}
 	startNode := s.SearchByNode(member, score)
+	newNode.rank = startNode.rank + 1
 
 	s.InsertNode(startNode, newNode)
 
 	for FlipCoin() {
-		aboveNode := &slNode{Member: member, Score: score}
+		aboveNode := &slNode{Member: member, Score: score, rank: newNode.rank}
 		newNode.TopNei = aboveNode
 		aboveNode.BottomNei = newNode
 
@@ -78,6 +82,8 @@ func (s *SkipList) AddNode(member string, score float64) {
 
 		s.InsertNode(startNode, newNode)
 	} // probabilistic 50% chance of adding node to above level
+
+	s.NumNodes++
 }
 
 func (s *SkipList) RemoveNode(member string, score float64) {
@@ -92,9 +98,12 @@ func (s *SkipList) RemoveNode(member string, score float64) {
 		node = node.TopNei
 		s.RemoveNodeFromLevel(node)
 	}
+
+	s.NumNodes--
 }
 
 // insert node after previous node, correctly altering references of the two nodes it is inserted between
+// assumes that prevNode and newNode have correctly updated rank values
 func (s *SkipList) InsertNode(prevNode, newNode *slNode) {
 	endNode := prevNode.RightNei
 
@@ -102,6 +111,13 @@ func (s *SkipList) InsertNode(prevNode, newNode *slNode) {
 	newNode.RightNei = endNode
 	prevNode.RightNei = newNode
 	endNode.LeftNei = newNode
+
+	newNode.Span = prevNode.Span - uint64(newNode.rank-prevNode.rank)
+	if prevNode.Span != s.NumNodes+1 {
+		newNode.Span += 1
+	}
+
+	prevNode.Span = uint64(newNode.rank - prevNode.rank)
 }
 
 func (s *SkipList) RemoveNodeFromLevel(node *slNode) {
@@ -111,7 +127,7 @@ func (s *SkipList) RemoveNodeFromLevel(node *slNode) {
 
 // create new skip list level and have its left bound reference the current left bound, return ptr to new left bound
 func (s *SkipList) CreateUpperLevel(currLeftBound *slNode) *slNode {
-	newLeftBound := &slNode{Score: math.Inf(-1)}
+	newLeftBound := &slNode{Score: math.Inf(-1), Span: s.NumNodes + 1, rank: -1}
 	newRightBound := &slNode{Score: math.Inf(1)}
 
 	newLeftBound.RightNei = newRightBound
@@ -141,12 +157,19 @@ func (s *SkipList) SearchByScore(score float64) *slNode {
 }
 
 func (s *SkipList) SearchByNode(member string, score float64) *slNode {
+	runningRank := -1
+
 	currNode := s.StartNode
+	currNode.rank = runningRank
+
 	nextNode := currNode.RightNei
 
 	for ZMemberCmpr(nextNode.Member, nextNode.Score, member, score) {
 		// while nextNode is less than or equal to searchNode...
+		runningRank += int(currNode.Span)
 		currNode = nextNode
+		currNode.rank = runningRank
+
 		nextNode = nextNode.RightNei
 	}
 
@@ -156,6 +179,7 @@ func (s *SkipList) SearchByNode(member string, score float64) *slNode {
 
 		for ZMemberCmpr(nextNode.Member, nextNode.Score, member, score) {
 			// while nextNode is less than or equal to searchNode...
+			runningRank += int(currNode.Span)
 			currNode = nextNode
 			nextNode = nextNode.RightNei
 		}

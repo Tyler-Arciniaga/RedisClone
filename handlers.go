@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"log/slog"
+	"math"
 	"net"
 	"strconv"
 	"sync"
@@ -445,4 +446,68 @@ func (h *Handler) HandleZCardCommand(cmd Command) []byte {
 	}
 
 	return h.Encoder.GenerateInt(numMembers)
+}
+
+func (h *Handler) HandleZRangeScoreCommand(cmd Command) []byte {
+	if len(cmd.Args) != 2 {
+		return h.Encoder.GenerateSimpleError("ERR ZRANGEBYSCORE expects start and stop boundaries")
+	}
+
+	start, err := h.BoundsToFloat(cmd.Args[0])
+	if err != nil {
+		return h.Encoder.GenerateSimpleError(err.Error())
+	}
+
+	end, err := h.BoundsToFloat(cmd.Args[1])
+	if err != nil {
+		return h.Encoder.GenerateSimpleError(err.Error())
+	}
+
+	if end < start {
+		return h.Encoder.GenerateSimpleError("ERR ensure that right boundary is larger or equal to left boundary")
+	}
+
+	resp := h.Store.GetZSetScoreRange(start, end)
+
+	isForTransaction := false
+	return h.Encoder.GenerateArray(resp, isForTransaction)
+}
+
+func (h *Handler) BoundsToFloat(b []byte) (float64, error) {
+	input := string(b)
+	if input == "-inf" {
+		return math.Inf(-1), nil
+	}
+
+	if input == "inf" || input == "+inf" {
+		return math.Inf(-1), nil
+	}
+
+	f, err := strconv.ParseFloat(string(b), 64)
+	return f, err
+}
+
+func (h *Handler) HandleZRankCommand(cmd Command) []byte {
+	if len(cmd.Args) < 2 {
+		return h.Encoder.GenerateSimpleError("ERR ZRANK expects at least a key and a member's string")
+	}
+
+	key := string(cmd.Args[0])
+	member := string(cmd.Args[1])
+
+	rank, ok, err := h.Store.GetMemberRank(key, member)
+	if err != nil {
+		return h.Encoder.GenerateSimpleError(err.Error())
+	}
+
+	if !ok {
+		return h.Encoder.GetNilBulkString()
+	}
+
+	return h.Encoder.GenerateInt(rank)
+}
+
+// TODO figure out span property, figure out node rankings, figure out ZRANGE command logic
+func (h *Handler) HandleZRangeCommand(cmd Command) []byte {
+	return nil
 }
