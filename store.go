@@ -82,14 +82,17 @@ func (s *Store) ZSetAdd(r ZSetModificationRequest) (int, error) {
 		}
 	}
 
+	var numNew int
 	for _, pair := range r.Members {
-		zs.ZAdd(pair.Member, pair.Score)
+		if isNew := zs.ZAdd(pair.Member, pair.Score); isNew {
+			numNew++
+		}
 	}
 
 	zs.SkipList.PrintList()
 
 	s.store[r.Key] = RedisObject{NativeType: Z_Set, Data: zs}
-	return len(r.Members), nil
+	return numNew, nil
 }
 
 func (s *Store) SetKeyVal(r SetRequest) (bool, error) {
