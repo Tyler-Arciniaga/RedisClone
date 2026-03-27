@@ -24,7 +24,7 @@ type slNode struct {
 }
 
 func (n *slNode) PrintNode() {
-	fmt.Printf("(%s,%g) -> ", n.Member, n.Score)
+	fmt.Printf("(%s,%g, %d) -> ", n.Member, n.Score, n.Span)
 }
 
 // return true if A less than B, return False if B less than A (don't need to handle equal since set is unique)
@@ -72,8 +72,8 @@ func (s *SkipList) AddNode(member string, score float64) {
 			startNode = startNode.LeftNei
 		} // continue moving the start node back until it either reaches a node with a reference to the above level, or becomes the -inf node (therefore need to add a completely new level)
 
-		if startNode.LeftNei == nil {
-			// startNode has reached the -inf node for this level ... need to create new top level
+		if startNode.LeftNei == nil && startNode.TopNei == nil {
+			// startNode has reached the -inf node for this level (and no upper level exists) ... need to create new top level
 			startNode.TopNei = s.CreateUpperLevel(startNode)
 		}
 
@@ -112,10 +112,10 @@ func (s *SkipList) InsertNode(prevNode, newNode *slNode) {
 	prevNode.RightNei = newNode
 	endNode.LeftNei = newNode
 
-	newNode.Span = prevNode.Span - uint64(newNode.rank-prevNode.rank)
-	if prevNode.Span != s.NumNodes+1 {
-		newNode.Span += 1
-	}
+	newNode.Span = prevNode.Span - uint64(newNode.rank-prevNode.rank) + 1
+	// if prevNode.Span != s.NumNodes+1 {
+	// 	newNode.Span += 1
+	// }
 
 	prevNode.Span = uint64(newNode.rank - prevNode.rank)
 }
@@ -175,12 +175,14 @@ func (s *SkipList) SearchByNode(member string, score float64) *slNode {
 
 	for currNode.BottomNei != nil {
 		currNode = currNode.BottomNei
+		currNode.rank = currNode.TopNei.rank
 		nextNode = currNode.RightNei
 
 		for ZMemberCmpr(nextNode.Member, nextNode.Score, member, score) {
 			// while nextNode is less than or equal to searchNode...
 			runningRank += int(currNode.Span)
 			currNode = nextNode
+			currNode.rank = runningRank
 			nextNode = nextNode.RightNei
 		}
 	}
