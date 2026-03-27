@@ -475,7 +475,7 @@ func (h *Handler) HandleZRangeScoreCommand(cmd Command) []byte {
 
 // TODO figure out span property, figure out node rankings, figure out ZRANGE command logic
 func (h *Handler) HandleZRangeCommand(cmd Command) []byte {
-	if len(cmd.Args) != 3 {
+	if len(cmd.Args) < 3 {
 		return h.Encoder.GenerateSimpleError("ERR ZRANGE expects key and two bounds")
 	}
 
@@ -489,7 +489,12 @@ func (h *Handler) HandleZRangeCommand(cmd Command) []byte {
 		return h.Encoder.GenerateSimpleError(err.Error())
 	}
 
-	respArr, err := h.Store.GetZSetRankRange(key, leftBound, rightBound)
+	withScores := false
+	if len(cmd.Args) > 3 && string(cmd.Args[3]) == "WITHSCORES" {
+		withScores = true
+	}
+
+	respArr, err := h.Store.GetZSetRankRange(key, leftBound, rightBound, withScores)
 	if err != nil {
 		return h.Encoder.GenerateSimpleError(err.Error())
 	}

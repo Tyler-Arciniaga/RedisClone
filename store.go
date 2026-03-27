@@ -128,7 +128,7 @@ func (s *Store) GetMemberRank(key, member string) (int, bool, error) {
 	return rank, ok, nil
 }
 
-func (s *Store) GetZSetRankRange(key string, start, end int) ([][]byte, error) {
+func (s *Store) GetZSetRankRange(key string, start, end int, withScore bool) ([][]byte, error) {
 	s.lock.RLock()
 	defer s.lock.RUnlock()
 
@@ -146,11 +146,16 @@ func (s *Store) GetZSetRankRange(key string, start, end int) ([][]byte, error) {
 		return nil, nil
 	}
 
-	//TODO handle the WITHSCORE flag
-
 	var resp [][]byte
-	for _, m := range members {
-		resp = append(resp, []byte(m.Member))
+	if withScore {
+		for _, m := range members {
+			score_string := strconv.FormatFloat(m.Score, 'f', -1, 64)
+			resp = append(resp, []byte(m.Member), []byte(score_string))
+		}
+	} else {
+		for _, m := range members {
+			resp = append(resp, []byte(m.Member))
+		}
 	}
 
 	return resp, nil
