@@ -449,7 +449,7 @@ func (h *Handler) HandleZCardCommand(cmd Command) []byte {
 }
 
 func (h *Handler) HandleZRangeScoreCommand(cmd Command) []byte {
-	if len(cmd.Args) != 2 {
+	if len(cmd.Args) != 3 {
 		return h.Encoder.GenerateSimpleError("ERR ZRANGEBYSCORE expects start and stop boundaries")
 	}
 
@@ -471,6 +471,31 @@ func (h *Handler) HandleZRangeScoreCommand(cmd Command) []byte {
 
 	isForTransaction := false
 	return h.Encoder.GenerateArray(resp, isForTransaction)
+}
+
+// TODO figure out span property, figure out node rankings, figure out ZRANGE command logic
+func (h *Handler) HandleZRangeCommand(cmd Command) []byte {
+	if len(cmd.Args) != 3 {
+		return h.Encoder.GenerateSimpleError("ERR ZRANGE expects key and two bounds")
+	}
+
+	key := string(cmd.Args[0])
+	leftBound, err := strconv.Atoi(string(cmd.Args[1]))
+	if err != nil {
+		return h.Encoder.GenerateSimpleError(err.Error())
+	}
+	rightBound, err := strconv.Atoi(string(cmd.Args[2]))
+	if err != nil {
+		return h.Encoder.GenerateSimpleError(err.Error())
+	}
+
+	respArr, err := h.Store.GetZSetRankRange(key, leftBound, rightBound)
+	if err != nil {
+		return h.Encoder.GenerateSimpleError(err.Error())
+	}
+
+	isForTransaction := false
+	return h.Encoder.GenerateArray(respArr, isForTransaction)
 }
 
 func (h *Handler) BoundsToFloat(b []byte) (float64, error) {
@@ -505,9 +530,4 @@ func (h *Handler) HandleZRankCommand(cmd Command) []byte {
 	}
 
 	return h.Encoder.GenerateInt(rank)
-}
-
-// TODO figure out span property, figure out node rankings, figure out ZRANGE command logic
-func (h *Handler) HandleZRangeCommand(cmd Command) []byte {
-	return nil
 }

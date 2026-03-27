@@ -206,6 +206,29 @@ func (s *SkipList) SearchByNode(member string, score float64) *slNode {
 	return currNode
 }
 
+func (s *SkipList) SearchByRank(rank int) *slNode {
+	runningRank := -1
+	currNode := s.StartNode
+
+	rightBoundScore := math.Inf(1)
+
+	for currNode.Score != rightBoundScore && runningRank+int(currNode.Span) <= rank {
+		runningRank = int(currNode.Span)
+		currNode = currNode.RightNei
+	}
+
+	for currNode.BottomNei != nil {
+		currNode = currNode.BottomNei
+
+		for currNode.Score != rightBoundScore && runningRank+int(currNode.Span) <= rank {
+			runningRank += int(currNode.Span)
+			currNode = currNode.RightNei
+		}
+	}
+
+	return currNode
+}
+
 // Skip List Testing
 func (s *SkipList) PrintList() {
 	currLeftBound := s.StartNode
