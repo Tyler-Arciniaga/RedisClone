@@ -473,7 +473,6 @@ func (h *Handler) HandleZRangeScoreCommand(cmd Command) []byte {
 	return h.Encoder.GenerateArray(resp, isForTransaction)
 }
 
-// TODO figure out span property, figure out node rankings, figure out ZRANGE command logic
 func (h *Handler) HandleZRangeCommand(cmd Command) []byte {
 	if len(cmd.Args) < 3 {
 		return h.Encoder.GenerateSimpleError("ERR ZRANGE expects key and two bounds")
@@ -489,6 +488,18 @@ func (h *Handler) HandleZRangeCommand(cmd Command) []byte {
 		return h.Encoder.GenerateSimpleError(err.Error())
 	}
 
+	numMembers, err := h.Store.GetZSetCard(key)
+	if err != nil {
+		return h.Encoder.GenerateSimpleError(err.Error())
+	}
+
+	leftBound = h.FormatZSetRankBounds(leftBound, numMembers)
+	rightBound = h.FormatZSetRankBounds(rightBound, numMembers)
+
+	if leftBound > rightBound {
+		return h.Encoder.GenerateSimpleError("ERR ZRANGE requires left bound to be less than or equal to right bound")
+	}
+
 	withScores := false
 	if len(cmd.Args) > 3 && string(cmd.Args[3]) == "WITHSCORES" {
 		withScores = true
@@ -501,6 +512,14 @@ func (h *Handler) HandleZRangeCommand(cmd Command) []byte {
 
 	isForTransaction := false
 	return h.Encoder.GenerateArray(respArr, isForTransaction)
+}
+
+func (h *Handler) FormatZSetRankBounds(bound, numMembers int) int {
+	if bound >= 0 {
+		return bound
+	}
+
+	return max(numMembers+bound, 0)
 }
 
 func (h *Handler) BoundsToFloat(b []byte) (float64, error) {
