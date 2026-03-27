@@ -62,6 +62,7 @@ func (s *SkipList) AddNode(member string, score float64) {
 	newNode.rank = startNode.rank + 1
 
 	s.InsertNode(startNode, newNode)
+	s.UpdateUpperLevelSpans(startNode)
 
 	for FlipCoin() {
 		aboveNode := &slNode{Member: member, Score: score, rank: newNode.rank}
@@ -84,6 +85,21 @@ func (s *SkipList) AddNode(member string, score float64) {
 	} // probabilistic 50% chance of adding node to above level
 
 	s.NumNodes++
+}
+
+func (s *SkipList) UpdateUpperLevelSpans(prevNode *slNode) {
+	for prevNode.TopNei == nil && prevNode.LeftNei != nil {
+		prevNode = prevNode.LeftNei
+	}
+
+	for prevNode.TopNei != nil {
+		prevNode = prevNode.TopNei
+		prevNode.Span++
+
+		for prevNode.TopNei == nil && prevNode.LeftNei != nil {
+			prevNode = prevNode.LeftNei
+		}
+	}
 }
 
 func (s *SkipList) RemoveNode(member string, score float64) {
