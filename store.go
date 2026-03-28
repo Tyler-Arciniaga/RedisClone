@@ -193,6 +193,33 @@ func (s *Store) GetZSetRankRange(key string, start, end int, withScore bool) ([]
 		return nil, nil
 	}
 
+	resp := s.GroupSelectedMembers(members, withScore)
+	return resp, nil
+}
+
+func (s *Store) GetZSetScoreRange(key string, start, end float64, withScore bool) ([][]byte, error) {
+	s.lock.RLock()
+	defer s.lock.RUnlock()
+
+	zs, ok, err := s.GetAsZSet(key)
+	if !ok {
+		return [][]byte{}, nil
+	} else {
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	members := zs.GetScoreRange(start, end)
+	if members == nil {
+		return nil, nil
+	}
+
+	resp := s.GroupSelectedMembers(members, withScore)
+	return resp, nil
+}
+
+func (s *Store) GroupSelectedMembers(members []MemberPair, withScore bool) [][]byte {
 	var resp [][]byte
 	if withScore {
 		for _, m := range members {
@@ -205,12 +232,7 @@ func (s *Store) GetZSetRankRange(key string, start, end int, withScore bool) ([]
 		}
 	}
 
-	return resp, nil
-}
-
-// TODO complete me
-func (s *Store) GetZSetScoreRange(start, end float64) [][]byte {
-	return nil
+	return resp
 }
 
 func (s *Store) SetKeyVal(r SetRequest) (bool, error) {

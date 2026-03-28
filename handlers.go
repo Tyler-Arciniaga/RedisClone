@@ -473,12 +473,14 @@ func (h *Handler) HandleZRangeScoreCommand(cmd Command) []byte {
 		return h.Encoder.GenerateSimpleError("ERR ZRANGEBYSCORE expects start and stop boundaries")
 	}
 
-	start, err := h.BoundsToFloat(cmd.Args[0])
+	key := string(cmd.Args[0])
+
+	start, err := h.BoundsToFloat(cmd.Args[1])
 	if err != nil {
 		return h.Encoder.GenerateSimpleError(err.Error())
 	}
 
-	end, err := h.BoundsToFloat(cmd.Args[1])
+	end, err := h.BoundsToFloat(cmd.Args[2])
 	if err != nil {
 		return h.Encoder.GenerateSimpleError(err.Error())
 	}
@@ -487,7 +489,15 @@ func (h *Handler) HandleZRangeScoreCommand(cmd Command) []byte {
 		return h.Encoder.GenerateSimpleError("ERR ensure that right boundary is larger or equal to left boundary")
 	}
 
-	resp := h.Store.GetZSetScoreRange(start, end)
+	withScores := false
+	if len(cmd.Args) > 3 && string(cmd.Args[3]) == "WITHSCORES" {
+		withScores = true
+	}
+
+	resp, err := h.Store.GetZSetScoreRange(key, start, end, withScores)
+	if err != nil {
+		return h.Encoder.GenerateSimpleError(err.Error())
+	}
 
 	isForTransaction := false
 	return h.Encoder.GenerateArray(resp, isForTransaction)

@@ -176,14 +176,16 @@ func (s *SkipList) CreateUpperLevel(currLeftBound *slNode) *slNode {
 
 func (s *SkipList) SearchByScore(score float64) *slNode {
 	currNode := s.StartNode
+
+	for currNode.RightNei.Score < score {
+		currNode = currNode.RightNei
+	}
+
 	for currNode.BottomNei != nil {
 		currNode = currNode.BottomNei
 
 		// scan as far into this level as possible
-		for currNode.RightNei.Score <= score {
-			if currNode.Score == score {
-				break // try to proceed to next bottom level
-			}
+		for currNode.RightNei.Score < score {
 			currNode = currNode.RightNei
 		}
 	}

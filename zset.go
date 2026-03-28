@@ -71,3 +71,20 @@ func (zs *ZSet) GetRankRange(start, end int) []MemberPair {
 
 	return inRange
 }
+
+func (zs *ZSet) GetScoreRange(start, end float64) []MemberPair {
+	startNode := zs.SkipList.SearchByScore(start)
+
+	// handle case where start node is the left bound
+	for !(startNode.Score >= start && startNode.Score <= end) && startNode.RightNei != nil {
+		startNode = startNode.RightNei
+	}
+
+	var inRange []MemberPair
+	for startNode.Score <= end {
+		inRange = append(inRange, MemberPair{Member: startNode.Member, Score: startNode.Score})
+		startNode = startNode.RightNei
+	}
+
+	return inRange
+}
