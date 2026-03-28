@@ -448,6 +448,26 @@ func (h *Handler) HandleZCardCommand(cmd Command) []byte {
 	return h.Encoder.GenerateInt(numMembers)
 }
 
+func (h *Handler) HandleZScoreCommand(cmd Command) []byte {
+	if len(cmd.Args) != 2 {
+		return h.Encoder.GenerateSimpleError("ERR ZSCORE command expects only the key and a single member")
+	}
+
+	key := string(cmd.Args[0])
+	member := string(cmd.Args[1])
+
+	resp, err := h.Store.GetZScore(key, member)
+	if err != nil {
+		return h.Encoder.GenerateSimpleError(err.Error())
+	}
+
+	if resp == nil {
+		return h.Encoder.GenerateNilBulkString()
+	}
+
+	return h.Encoder.GenerateBulkString(resp)
+}
+
 func (h *Handler) HandleZRangeScoreCommand(cmd Command) []byte {
 	if len(cmd.Args) != 3 {
 		return h.Encoder.GenerateSimpleError("ERR ZRANGEBYSCORE expects start and stop boundaries")

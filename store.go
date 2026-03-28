@@ -137,6 +137,27 @@ func (s *Store) GetZSetCard(key string) (int, error) {
 	return zs.NumMembers, nil
 }
 
+func (s *Store) GetZScore(key, member string) ([]byte, error) {
+	s.lock.RLock()
+	defer s.lock.RUnlock()
+
+	zs, ok, err := s.GetAsZSet(key)
+	if !ok {
+		return nil, nil
+	} else {
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	score, ok := zs.ZScore(member)
+	if !ok {
+		return nil, nil
+	}
+
+	return []byte(strconv.FormatFloat(score, 'f', -1, 64)), nil
+}
+
 func (s *Store) GetMemberRank(key, member string) (int, bool, error) {
 	s.lock.RLock()
 	defer s.lock.RUnlock()

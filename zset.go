@@ -48,6 +48,11 @@ func (zs *ZSet) ZRank(m string) (int, bool) {
 	return node.rank, true
 }
 
+func (zs *ZSet) ZScore(m string) (float64, bool) {
+	score, ok := zs.Hashmap[m]
+	return score, ok
+}
+
 func (zs *ZSet) GetRankRange(start, end int) []MemberPair {
 	startNode := zs.SkipList.SearchByRank(start)
 	if startNode.Score == math.Inf(1) {

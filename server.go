@@ -346,6 +346,8 @@ func (s *Server) HandleParsedCommands(cmd Command, isAtomic bool, conn net.Conn)
 		response = s.Handler.HandleZAddCommand(cmd)
 	case "ZCARD":
 		response = s.Handler.HandleZCardCommand(cmd)
+	case "ZSCORE":
+		response = s.Handler.HandleZScoreCommand(cmd)
 	case "ZRANK":
 		response = s.Handler.HandleZRankCommand(cmd)
 	case "ZRANGE":
