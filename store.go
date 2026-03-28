@@ -54,6 +54,187 @@ func (s *Store) GetAsList(key string) (ListData, bool, error) {
 	return list, true, nil
 }
 
+// Note: This function is unsafe, it should only ever be called by a function who holds a lock
+func (s *Store) GetAsZSet(key string) (ZSet, bool, error) {
+	obj, ok := s.store[key]
+	if !ok {
+		return ZSet{}, false, nil
+	}
+
+	zset, ok := obj.Data.(ZSet)
+	if obj.NativeType != Z_Set || !ok {
+		return ZSet{}, true, errors.New("WRONGTYPE Operation against a key holding the wrong kind of value")
+	}
+
+	return zset, true, nil
+}
+
+func (s *Store) ZSetAdd(r ZSetModificationRequest) (int, error) {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+
+	zs, ok, err := s.GetAsZSet(r.Key)
+	if !ok {
+		zs = ZSet{Hashmap: make(map[string]float64), SkipList: *NewSkipList(), NumMembers: 0}
+	} else {
+		if err != nil {
+			return 0, err
+		}
+	}
+
+	var numNew int
+	for _, pair := range r.Members {
+		if isNew := zs.ZAdd(pair.Member, pair.Score); isNew {
+			numNew++
+		}
+	}
+
+	zs.SkipList.PrintList()
+
+	s.store[r.Key] = RedisObject{NativeType: Z_Set, Data: zs}
+	return numNew, nil
+}
+
+func (s *Store) ZSetRemove(key string, members []string) (int, error) {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+
+	zs, ok, err := s.GetAsZSet(key)
+	if !ok {
+		return 0, nil
+	} else {
+		if err != nil {
+			return 0, err
+		}
+	}
+
+	var numRemoved int
+	for _, m := range members {
+		if wasRemoved := zs.ZRem(m); wasRemoved {
+			numRemoved++
+		}
+	}
+
+	zs.SkipList.PrintList()
+
+	s.store[key] = RedisObject{NativeType: Z_Set, Data: zs}
+	return numRemoved, nil
+}
+
+func (s *Store) GetZSetCard(key string) (int, error) {
+	s.lock.RLock()
+	defer s.lock.RUnlock()
+
+	zs, ok, err := s.GetAsZSet(key)
+	if !ok {
+		return 0, nil
+	} else {
+		if err != nil {
+			return 0, err
+		}
+	}
+
+	return zs.NumMembers, nil
+}
+
+func (s *Store) GetZScore(key, member string) ([]byte, error) {
+	s.lock.RLock()
+	defer s.lock.RUnlock()
+
+	zs, ok, err := s.GetAsZSet(key)
+	if !ok {
+		return nil, nil
+	} else {
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	score, ok := zs.ZScore(member)
+	if !ok {
+		return nil, nil
+	}
+
+	return []byte(strconv.FormatFloat(score, 'f', -1, 64)), nil
+}
+
+func (s *Store) GetMemberRank(key, member string) (int, bool, error) {
+	s.lock.RLock()
+	defer s.lock.RUnlock()
+
+	zs, ok, err := s.GetAsZSet(key)
+	if !ok {
+		return 0, false, nil
+	} else {
+		if err != nil {
+			return 0, true, err
+		}
+	}
+
+	rank, ok := zs.ZRank(member)
+	return rank, ok, nil
+}
+
+func (s *Store) GetZSetRankRange(key string, start, end int, withScore bool) ([][]byte, error) {
+	s.lock.RLock()
+	defer s.lock.RUnlock()
+
+	zs, ok, err := s.GetAsZSet(key)
+	if !ok {
+		return [][]byte{}, nil
+	} else {
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	members := zs.GetRankRange(start, end)
+	if members == nil {
+		return nil, nil
+	}
+
+	resp := s.GroupSelectedMembers(members, withScore)
+	return resp, nil
+}
+
+func (s *Store) GetZSetScoreRange(key string, start, end float64, withScore bool) ([][]byte, error) {
+	s.lock.RLock()
+	defer s.lock.RUnlock()
+
+	zs, ok, err := s.GetAsZSet(key)
+	if !ok {
+		return [][]byte{}, nil
+	} else {
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	members := zs.GetScoreRange(start, end)
+	if members == nil {
+		return nil, nil
+	}
+
+	resp := s.GroupSelectedMembers(members, withScore)
+	return resp, nil
+}
+
+func (s *Store) GroupSelectedMembers(members []MemberPair, withScore bool) [][]byte {
+	var resp [][]byte
+	if withScore {
+		for _, m := range members {
+			score_string := strconv.FormatFloat(m.Score, 'f', -1, 64)
+			resp = append(resp, []byte(m.Member), []byte(score_string))
+		}
+	} else {
+		for _, m := range members {
+			resp = append(resp, []byte(m.Member))
+		}
+	}
+
+	return resp
+}
+
 func (s *Store) SetKeyVal(r SetRequest) (bool, error) {
 	s.lock.Lock()
 	defer s.lock.Unlock()

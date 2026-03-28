@@ -342,6 +342,20 @@ func (s *Server) HandleParsedCommands(cmd Command, isAtomic bool, conn net.Conn)
 		response = s.Handler.Encoder.GenerateSimpleError("ERR client is currently not in transaction mode, enter transaction mode with MULTI command")
 	case "DISCARD":
 		response = s.Handler.Encoder.GenerateSimpleError("ERR client is currently not in transaction mode, enter transaction mode with MULTI command")
+	case "ZADD":
+		response = s.Handler.HandleZAddCommand(cmd)
+	case "ZCARD":
+		response = s.Handler.HandleZCardCommand(cmd)
+	case "ZSCORE":
+		response = s.Handler.HandleZScoreCommand(cmd)
+	case "ZRANK":
+		response = s.Handler.HandleZRankCommand(cmd)
+	case "ZRANGE":
+		response = s.Handler.HandleZRangeCommand(cmd)
+	case "ZRANGEBYSCORE":
+		response = s.Handler.HandleZRangeScoreCommand(cmd) // TODO
+	case "ZREM":
+		response = s.Handler.HandleZRemCommand(cmd)
 	default:
 		response = s.Handler.Encoder.GenerateSimpleError(fmt.Sprintf("ERR unknown command '%s'", cmd.Name))
 	}

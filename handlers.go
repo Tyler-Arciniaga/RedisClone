@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"log/slog"
+	"math"
 	"net"
 	"strconv"
 	"sync"
@@ -357,12 +358,6 @@ func (h *Handler) HandleUnsubscribeCommand(cmd Command, conn net.Conn) uint64 {
 		for _, chanName := range cmd.Args {
 			stringName := string(chanName)
 			h.unsubscribeFromChannel(&numChannelsIn, conn, stringName)
-			// if exists := h.SubscriberChannels.RemoveSubscriber(conn, stringName); exists {
-			// 	numChannelsIn--
-			// 	unsubscribeMsg := SubscriptionMessage{IsSubscribeMessage: false, ChanName: chanName, CurrNumChannels: numChannelsIn}
-			// 	msg := h.Encoder.GenerateSubscriptionMessage(unsubscribeMsg)
-			// 	h.SubscriberChannels.PublishDirectMessage(msg, stringName, conn)
-			// }
 		}
 	}
 
@@ -405,4 +400,208 @@ func (h *Handler) HandlePublishCommand(cmd Command) []byte {
 	numRecieved := h.SubscriberChannels.PublishMessage(msg, string(chanName))
 
 	return h.Encoder.GenerateInt(int(numRecieved))
+}
+
+// Sorted Sets (ZSets) Commands
+func (h *Handler) HandleZAddCommand(cmd Command) []byte {
+	if len(cmd.Args) < 3 {
+		return h.Encoder.GenerateSimpleError("ERR must specify at zset name and at least one member and score")
+	}
+
+	if len(cmd.Args)%2 == 0 {
+		return h.Encoder.GenerateSimpleError("ERR make sure that each specified ZSet member has a score and vice versa")
+	}
+
+	key := string(cmd.Args[0])
+	var members []MemberPair
+
+	for i := 1; i < len(cmd.Args); i += 2 {
+		f, err := strconv.ParseFloat(string(cmd.Args[i+1]), 64)
+		if err != nil {
+			slog.Error("error parsing float64 for zset member pair", "err", err)
+			return h.Encoder.GenerateSimpleError("ERR parsing some float64")
+		}
+
+		m := MemberPair{Member: string(cmd.Args[i]), Score: f}
+		members = append(members, m)
+	}
+
+	numAdded, err := h.Store.ZSetAdd(ZSetModificationRequest{Key: key, Members: members})
+	if err != nil {
+		return h.Encoder.GenerateSimpleError(err.Error())
+	}
+
+	return h.Encoder.GenerateInt(numAdded)
+}
+
+func (h *Handler) HandleZCardCommand(cmd Command) []byte {
+	if len(cmd.Args) != 1 {
+		return h.Encoder.GenerateSimpleError("ERR ZCARD command expects only the key")
+	}
+
+	key := string(cmd.Args[0])
+	numMembers, err := h.Store.GetZSetCard(key)
+	if err != nil {
+		return h.Encoder.GenerateSimpleError(err.Error())
+	}
+
+	return h.Encoder.GenerateInt(numMembers)
+}
+
+func (h *Handler) HandleZScoreCommand(cmd Command) []byte {
+	if len(cmd.Args) != 2 {
+		return h.Encoder.GenerateSimpleError("ERR ZSCORE command expects only the key and a single member")
+	}
+
+	key := string(cmd.Args[0])
+	member := string(cmd.Args[1])
+
+	resp, err := h.Store.GetZScore(key, member)
+	if err != nil {
+		return h.Encoder.GenerateSimpleError(err.Error())
+	}
+
+	if resp == nil {
+		return h.Encoder.GenerateNilBulkString()
+	}
+
+	return h.Encoder.GenerateBulkString(resp)
+}
+
+func (h *Handler) HandleZRangeScoreCommand(cmd Command) []byte {
+	if len(cmd.Args) != 3 {
+		return h.Encoder.GenerateSimpleError("ERR ZRANGEBYSCORE expects start and stop boundaries")
+	}
+
+	key := string(cmd.Args[0])
+
+	start, err := h.BoundsToFloat(cmd.Args[1])
+	if err != nil {
+		return h.Encoder.GenerateSimpleError(err.Error())
+	}
+
+	end, err := h.BoundsToFloat(cmd.Args[2])
+	if err != nil {
+		return h.Encoder.GenerateSimpleError(err.Error())
+	}
+
+	if end < start {
+		return h.Encoder.GenerateSimpleError("ERR ensure that right boundary is larger or equal to left boundary")
+	}
+
+	withScores := false
+	if len(cmd.Args) > 3 && string(cmd.Args[3]) == "WITHSCORES" {
+		withScores = true
+	}
+
+	resp, err := h.Store.GetZSetScoreRange(key, start, end, withScores)
+	if err != nil {
+		return h.Encoder.GenerateSimpleError(err.Error())
+	}
+
+	isForTransaction := false
+	return h.Encoder.GenerateArray(resp, isForTransaction)
+}
+
+func (h *Handler) HandleZRangeCommand(cmd Command) []byte {
+	if len(cmd.Args) < 3 {
+		return h.Encoder.GenerateSimpleError("ERR ZRANGE expects key and two bounds")
+	}
+
+	key := string(cmd.Args[0])
+	leftBound, err := strconv.Atoi(string(cmd.Args[1]))
+	if err != nil {
+		return h.Encoder.GenerateSimpleError(err.Error())
+	}
+	rightBound, err := strconv.Atoi(string(cmd.Args[2]))
+	if err != nil {
+		return h.Encoder.GenerateSimpleError(err.Error())
+	}
+
+	numMembers, err := h.Store.GetZSetCard(key)
+	if err != nil {
+		return h.Encoder.GenerateSimpleError(err.Error())
+	}
+
+	leftBound = h.FormatZSetRankBounds(leftBound, numMembers)
+	rightBound = h.FormatZSetRankBounds(rightBound, numMembers)
+
+	if leftBound > rightBound {
+		return h.Encoder.GenerateSimpleError("ERR ZRANGE requires left bound to be less than or equal to right bound")
+	}
+
+	withScores := false
+	if len(cmd.Args) > 3 && string(cmd.Args[3]) == "WITHSCORES" {
+		withScores = true
+	}
+
+	respArr, err := h.Store.GetZSetRankRange(key, leftBound, rightBound, withScores)
+	if err != nil {
+		return h.Encoder.GenerateSimpleError(err.Error())
+	}
+
+	isForTransaction := false
+	return h.Encoder.GenerateArray(respArr, isForTransaction)
+}
+
+func (h *Handler) FormatZSetRankBounds(bound, numMembers int) int {
+	if bound >= 0 {
+		return bound
+	}
+
+	return max(numMembers+bound, 0)
+}
+
+func (h *Handler) BoundsToFloat(b []byte) (float64, error) {
+	input := string(b)
+	if input == "-inf" {
+		return math.Inf(-1), nil
+	}
+
+	if input == "inf" || input == "+inf" {
+		return math.Inf(-1), nil
+	}
+
+	f, err := strconv.ParseFloat(string(b), 64)
+	return f, err
+}
+
+func (h *Handler) HandleZRankCommand(cmd Command) []byte {
+	if len(cmd.Args) < 2 {
+		return h.Encoder.GenerateSimpleError("ERR ZRANK expects at least a key and a member's string")
+	}
+
+	key := string(cmd.Args[0])
+	member := string(cmd.Args[1])
+
+	rank, ok, err := h.Store.GetMemberRank(key, member)
+	if err != nil {
+		return h.Encoder.GenerateSimpleError(err.Error())
+	}
+
+	if !ok {
+		return h.Encoder.GetNilBulkString()
+	}
+
+	return h.Encoder.GenerateInt(rank)
+}
+
+func (h *Handler) HandleZRemCommand(cmd Command) []byte {
+	if len(cmd.Args) < 2 {
+		return h.Encoder.GenerateSimpleError("ERR ZREM expects at least a key and a member's string")
+	}
+
+	key := string(cmd.Args[0])
+
+	var members []string
+	for _, m := range cmd.Args[1:] {
+		members = append(members, string(m))
+	}
+
+	numRemoved, err := h.Store.ZSetRemove(key, members)
+	if err != nil {
+		return h.Encoder.GenerateSimpleError(err.Error())
+	}
+
+	return h.Encoder.GenerateInt(numRemoved)
 }
