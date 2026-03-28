@@ -25,6 +25,19 @@ func (zs *ZSet) ZAdd(m string, s float64) bool {
 	return isNew
 }
 
+func (zs *ZSet) ZRem(m string) bool {
+	score, ok := zs.Hashmap[m]
+	if !ok {
+		return false
+	}
+
+	zs.SkipList.RemoveNode(m, score)
+	delete(zs.Hashmap, m)
+	zs.NumMembers--
+
+	return true
+}
+
 func (zs *ZSet) ZRank(m string) (int, bool) {
 	score, ok := zs.Hashmap[m]
 	if !ok {

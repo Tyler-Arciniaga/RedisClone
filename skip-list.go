@@ -108,11 +108,12 @@ func (s *SkipList) RemoveNode(member string, score float64) {
 		return
 	}
 
-	s.RemoveNodeFromLevel(node) // remove node from bottom most level
+	isBottomLevel := true
+	s.RemoveNodeFromLevel(node, isBottomLevel) // remove node from bottom most level
 
 	for node.TopNei != nil {
 		node = node.TopNei
-		s.RemoveNodeFromLevel(node)
+		s.RemoveNodeFromLevel(node, false)
 	}
 
 	s.DecrementUpperLevelSpans(node)
@@ -136,8 +137,10 @@ func (s *SkipList) InsertNode(prevNode, newNode *slNode) {
 	prevNode.Span = uint64(newNode.rank - prevNode.rank)
 }
 
-func (s *SkipList) RemoveNodeFromLevel(node *slNode) {
-	node.LeftNei.Span += node.Span // update the prevNode's span
+func (s *SkipList) RemoveNodeFromLevel(node *slNode, isBottomLevel bool) {
+	if !isBottomLevel {
+		node.LeftNei.Span += node.Span - 1 // update the prevNode's span (don't forget minus 1 since one node is being removed)
+	}
 	node.LeftNei.RightNei = node.RightNei
 	node.RightNei.LeftNei = node.LeftNei
 }

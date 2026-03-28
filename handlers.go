@@ -555,3 +555,23 @@ func (h *Handler) HandleZRankCommand(cmd Command) []byte {
 
 	return h.Encoder.GenerateInt(rank)
 }
+
+func (h *Handler) HandleZRemCommand(cmd Command) []byte {
+	if len(cmd.Args) < 2 {
+		return h.Encoder.GenerateSimpleError("ERR ZREM expects at least a key and a member's string")
+	}
+
+	key := string(cmd.Args[0])
+
+	var members []string
+	for _, m := range cmd.Args[1:] {
+		members = append(members, string(m))
+	}
+
+	numRemoved, err := h.Store.ZSetRemove(key, members)
+	if err != nil {
+		return h.Encoder.GenerateSimpleError(err.Error())
+	}
+
+	return h.Encoder.GenerateInt(numRemoved)
+}

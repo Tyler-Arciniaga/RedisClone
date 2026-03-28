@@ -95,6 +95,32 @@ func (s *Store) ZSetAdd(r ZSetModificationRequest) (int, error) {
 	return numNew, nil
 }
 
+func (s *Store) ZSetRemove(key string, members []string) (int, error) {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+
+	zs, ok, err := s.GetAsZSet(key)
+	if !ok {
+		return 0, nil
+	} else {
+		if err != nil {
+			return 0, err
+		}
+	}
+
+	var numRemoved int
+	for _, m := range members {
+		if wasRemoved := zs.ZRem(m); wasRemoved {
+			numRemoved++
+		}
+	}
+
+	zs.SkipList.PrintList()
+
+	s.store[key] = RedisObject{NativeType: Z_Set, Data: zs}
+	return numRemoved, nil
+}
+
 func (s *Store) GetZSetCard(key string) (int, error) {
 	s.lock.RLock()
 	defer s.lock.RUnlock()

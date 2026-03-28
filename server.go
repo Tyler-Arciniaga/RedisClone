@@ -351,7 +351,9 @@ func (s *Server) HandleParsedCommands(cmd Command, isAtomic bool, conn net.Conn)
 	case "ZRANGE":
 		response = s.Handler.HandleZRangeCommand(cmd)
 	case "ZRANGEBYSCORE":
-		response = s.Handler.HandleZRangeScoreCommand(cmd)
+		response = s.Handler.HandleZRangeScoreCommand(cmd) // TODO
+	case "ZREM":
+		response = s.Handler.HandleZRemCommand(cmd)
 	default:
 		response = s.Handler.Encoder.GenerateSimpleError(fmt.Sprintf("ERR unknown command '%s'", cmd.Name))
 	}
