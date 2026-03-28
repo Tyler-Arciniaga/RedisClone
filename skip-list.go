@@ -62,7 +62,8 @@ func (s *SkipList) AddNode(member string, score float64) {
 	newNode.rank = startNode.rank + 1
 
 	s.InsertNode(startNode, newNode)
-	s.UpdateUpperLevelSpans(startNode)
+	s.NumNodes++
+	s.IncrementUpperLevelSpans(startNode)
 
 	for FlipCoin() {
 		aboveNode := &slNode{Member: member, Score: score, rank: newNode.rank}
@@ -84,10 +85,9 @@ func (s *SkipList) AddNode(member string, score float64) {
 		s.InsertNode(startNode, newNode)
 	} // probabilistic 50% chance of adding node to above level
 
-	s.NumNodes++
 }
 
-func (s *SkipList) UpdateUpperLevelSpans(prevNode *slNode) {
+func (s *SkipList) IncrementUpperLevelSpans(prevNode *slNode) {
 	for prevNode.TopNei == nil && prevNode.LeftNei != nil {
 		prevNode = prevNode.LeftNei
 	}
@@ -115,6 +115,8 @@ func (s *SkipList) RemoveNode(member string, score float64) {
 		s.RemoveNodeFromLevel(node)
 	}
 
+	s.DecrementUpperLevelSpans(node)
+
 	s.NumNodes--
 }
 
@@ -128,17 +130,31 @@ func (s *SkipList) InsertNode(prevNode, newNode *slNode) {
 	prevNode.RightNei = newNode
 	endNode.LeftNei = newNode
 
-	newNode.Span = prevNode.Span - uint64(newNode.rank-prevNode.rank) + 1
-	// if prevNode.Span != s.NumNodes+1 {
-	// 	newNode.Span += 1
-	// }
+	newNode.Span = prevNode.Span - uint64(newNode.rank-prevNode.rank)
+	newNode.Span = max(newNode.Span, 1) // handle edge where span calculation yields 0, should always have span of at least 1
 
 	prevNode.Span = uint64(newNode.rank - prevNode.rank)
 }
 
 func (s *SkipList) RemoveNodeFromLevel(node *slNode) {
+	node.LeftNei.Span += node.Span // update the prevNode's span
 	node.LeftNei.RightNei = node.RightNei
 	node.RightNei.LeftNei = node.LeftNei
+}
+
+func (s *SkipList) DecrementUpperLevelSpans(node *slNode) {
+	for node.TopNei == nil && node.LeftNei != nil {
+		node = node.LeftNei
+	}
+
+	for node.TopNei != nil {
+		node = node.TopNei
+		node.Span--
+
+		for node.TopNei == nil && node.LeftNei != nil {
+			node = node.LeftNei
+		}
+	}
 }
 
 // create new skip list level and have its left bound reference the current left bound, return ptr to new left bound
